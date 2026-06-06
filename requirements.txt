@@ -1,0 +1,6 @@
+fastmcp>=2.0
+httpx>=0.27
+# x402 pay-per-attest is INERT by default. To ARM it, uncomment the line below
+# (the [svm] extra pulls solders; WITHOUT it the container crash-loops at boot)
+# and follow the staging-first steps in x402_gate.py.
+# x402[fastapi,svm]>=2.10.0

@@ -1,0 +1,41 @@
+{
+  "name": "MINT Protocol",
+  "description": "Universal work attestation for autonomous agents. Register identity, attest completed work, verify trust scores. The reputation layer for the agent economy.",
+  "url": "https://mint.foundrynet.io",
+  "capabilities": [
+    "agent_identity",
+    "work_attestation",
+    "trust_verification",
+    "reputation_scoring"
+  ],
+  "tools": [
+    {
+      "name": "mint_register",
+      "description": "Register any autonomous actor with persistent cryptographic identity",
+      "pricing": "free"
+    },
+    {
+      "name": "mint_attest",
+      "description": "Attest completed work with tamper-evident on-chain record",
+      "pricing": "0.02 USDC per attestation"
+    },
+    {
+      "name": "mint_verify",
+      "description": "Query any actor's trust score and verified work history",
+      "pricing": "free"
+    }
+  ],
+  "protocols": {
+    "mcp": {
+      "endpoint": "https://mint-mcp-production.up.railway.app/sse",
+      "transport": "sse",
+      "tools_count": 3
+    },
+    "x402": {
+      "supported": true,
+      "currency": "USDC",
+      "network": "solana"
+    }
+  },
+  "contact": "hello@foundrynet.io"
+}

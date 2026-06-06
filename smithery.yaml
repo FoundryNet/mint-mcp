@@ -1,0 +1,40 @@
+# Smithery listing metadata — MINT Protocol MCP
+# New, standalone listing (distinct from @foundrynet/forge — different product,
+# different audience: every autonomous agent, not just industrial machines).
+name: "@foundrynet/mint-protocol"
+displayName: "MINT Protocol — Universal Work Attestation"
+description: >-
+  Register, attest, and verify work for any autonomous agent. Persistent
+  cryptographic identity, tamper-evident on-chain work records, and trust scores
+  built from verified history. The reputation layer for the agent economy.
+
+# Hosted, URL-based ("external") server — Smithery's Gateway proxies user traffic
+# to the upstream Railway SSE endpoint. register + verify are free and need no
+# auth; mint_attest takes x402 USDC or a Forge billing key.
+startCommand:
+  type: http
+  url: "https://mint-mcp-production.up.railway.app/sse"
+  transport: sse
+  configSchema:
+    type: object
+    properties:
+      api_key:
+        type: string
+        title: "Forge billing key (optional)"
+        description: "fnet_ key to bill attestations to a Forge account instead of paying per-call via x402. Omit for free register/verify."
+
+homepage: "https://mint.foundrynet.io"
+documentationUrl: "https://foundrynet.io/docs"
+license: "Proprietary"
+keywords:
+  - attestation
+  - trust
+  - reputation
+  - verification
+  - identity
+  - agent
+  - autonomous
+  - work-proof
+  - on-chain
+  - solana
+  - mint
