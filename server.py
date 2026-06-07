@@ -71,6 +71,12 @@ async def health(request: Request) -> JSONResponse:
     })
 
 
+@mcp.custom_route("/ping", methods=["GET"])
+async def ping(request: Request) -> JSONResponse:
+    """Liveness for hosted runtimes that probe /ping (mcp-proxy etc.)."""
+    return JSONResponse({"status": "ok"})
+
+
 # ── REST surface (for the mint-attest Python SDK + any HTTP client) ──────────
 # The MCP tools speak SSE/JSON-RPC; these plain-HTTP routes expose the SAME three
 # operations (via core.*, no logic drift) so a non-MCP client — the mint-attest
