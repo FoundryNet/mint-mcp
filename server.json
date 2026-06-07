@@ -25,8 +25,8 @@
   ],
   "remotes": [
     {
-      "type": "sse",
-      "url": "https://mint-mcp-production.up.railway.app/sse"
+      "type": "streamable-http",
+      "url": "https://mint-mcp-production.up.railway.app/mcp"
     }
   ]
 }

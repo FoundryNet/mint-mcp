@@ -7,17 +7,19 @@ autonomous agent, machine, or service:
   mint_attest    — anchor a tamper-evident record of completed work     (2¢)
   mint_verify    — query an actor's trust score + verified work history (FREE)
 
-It rebuilds nothing: identity reuses the Forge API (/v1/identify), and
-settlement/trust reuse the existing MINT relay. Agents are the users — there is
-no web UI, no dashboard. Free to register, free to verify, 2¢ to attest; the
-network grows on free identity + free reputation, revenue comes from attestation
-volume.
+It rebuilds nothing and holds no relay key: identity reuses Forge /v1/identify,
+attestation reuses Forge /v1/attest (Forge is the single relay key-holder +
+settlement engine). Agents are the users — no web UI, no dashboard. Free to
+register, free to verify, 2¢ to attest; the network grows on free identity +
+free reputation, revenue comes from attestation volume.
 
-Transport: SSE at /sse (for remote Railway hosting). Health: GET /health.
+Transport: Streamable HTTP at /mcp (remote Railway hosting + Smithery's hosted
+gateway, which connects via Streamable HTTP — SSE 405s there). Health: GET /health.
 Discovery: /.well-known/agent-card.json, /.well-known/mcp[/server-card.json].
 """
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 
@@ -26,9 +28,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 import config
+import core
 import forge_client
-import mint_client
 import tools
+import x402_gate
 from x402_gate import X402Middleware
 
 logging.basicConfig(
@@ -38,11 +41,8 @@ logging.basicConfig(
 logger = logging.getLogger("mint.mcp")
 
 if not forge_client.configured():
-    logger.warning("FORGE_API_KEY not set — mint_register will return not_configured "
-                   "until it's set in the Railway dashboard.")
-if not mint_client.configured():
-    logger.warning("MINT_RELAY_KEY not set — mint_attest will fall back to Forge "
-                   "/v1/settle and mint_verify will return not_configured.")
+    logger.warning("FORGE_API_KEY not set — all three tools will return "
+                   "not_configured until it's set in the Railway dashboard.")
 
 mcp = FastMCP("mint-protocol")
 
@@ -62,14 +62,90 @@ async def health(request: Request) -> JSONResponse:
     return JSONResponse({
         "status":            "ok",
         "service":           "mint-protocol-mcp",
-        "transport":         "sse",
+        "transport":         "streamable-http",
         "tools":             ["mint_register", "mint_attest", "mint_verify"],
         "forge_api_url":     config.FORGE_API_URL,
-        "mint_relay_url":    config.MINT_RELAY_URL,
         "forge_key_configured":  forge_client.configured(),
-        "relay_key_configured":  mint_client.configured(),
+        "trust_read":        "pending_forge_endpoint",
         "x402_enabled":      config.X402_ENABLED,
     })
+
+
+# ── REST surface (for the mint-attest Python SDK + any HTTP client) ──────────
+# The MCP tools speak SSE/JSON-RPC; these plain-HTTP routes expose the SAME three
+# operations (via core.*, no logic drift) so a non-MCP client — the mint-attest
+# PyPI SDK, curl, a webhook — can register/attest/verify with one POST. The
+# developer's fnet_ key rides in `Authorization: Bearer` and is passed through to
+# Forge so the actor + its attestations belong to THEIR account.
+
+_ERR_STATUS = {"bad_request": 400, "not_configured": 503,
+               "not_found": 404, "attest_failed": 502}
+
+
+def _resp(d: dict) -> JSONResponse:
+    if "error" not in d:
+        return JSONResponse(d, status_code=200)
+    err = str(d.get("error") or "")
+    if err in _ERR_STATUS:
+        code = _ERR_STATUS[err]
+    elif err.startswith("http_") and err[5:].isdigit():
+        code = int(err[5:])                 # surface Forge's status (e.g. 401) verbatim
+    elif err in ("network", "non_json_response", "unreachable"):
+        code = 502
+    else:
+        code = 400
+    return JSONResponse(d, status_code=code)
+
+
+def _bearer(request: Request):
+    a = request.headers.get("authorization", "")
+    return a[7:].strip() if a.lower().startswith("bearer ") else None
+
+
+async def _json_body(request: Request) -> dict:
+    try:
+        b = await request.json()
+        return b if isinstance(b, dict) else {}
+    except Exception:
+        return {}
+
+
+@mcp.custom_route("/v1/register", methods=["POST"])
+async def rest_register(request: Request) -> JSONResponse:
+    b = await _json_body(request)
+    return _resp(await core.do_register(
+        b.get("actor_type", "ai_agent"), b.get("name", ""),
+        b.get("capabilities"), b.get("operator"), b.get("metadata"),
+        api_key=_bearer(request)))
+
+
+@mcp.custom_route("/v1/attest", methods=["POST"])
+async def rest_attest(request: Request) -> JSONResponse:
+    # Tron model: attest requires EITHER an fnet_ key (Stripe billing) OR an x402
+    # USDC payment — but ONLY when x402 is armed. Inert → authorize() passes open.
+    decision = await x402_gate.authorize(
+        request.headers.get("authorization"), request.headers.get("x-payment"))
+    if not decision["ok"]:
+        return JSONResponse(decision["error"], status_code=402)
+
+    b = await _json_body(request)
+    d = await core.do_attest(
+        b.get("mint_id", ""), b.get("work_type", ""), b.get("duration_seconds", 0),
+        summary=b.get("summary", ""), input_hash=b.get("input_hash"),
+        output_hash=b.get("output_hash"), metadata=b.get("metadata"),
+        api_key=_bearer(request))
+
+    # capture USDC only after a successful attestation (never bill a failed one)
+    if decision.get("method") == "x402" and "error" not in d:
+        await x402_gate.capture(decision.get("payment"))
+    return _resp(d)
+
+
+@mcp.custom_route("/v1/verify", methods=["POST"])
+async def rest_verify(request: Request) -> JSONResponse:
+    b = await _json_body(request)
+    return _resp(await core.do_verify(
+        b.get("mint_id"), b.get("actor_name"), b.get("actor_type")))
 
 
 # ── Discovery: A2A agent card ────────────────────────────────────────────────
@@ -101,8 +177,8 @@ _AGENT_CARD = {
     ],
     "protocols": {
         "mcp": {
-            "endpoint": config.PUBLIC_SSE_URL,
-            "transport": "sse",
+            "endpoint": config.PUBLIC_MCP_URL,
+            "transport": "streamable-http",
             "tools_count": 3,
         },
         "x402": {
@@ -127,22 +203,56 @@ async def agent_card(request: Request) -> JSONResponse:
 async def mcp_endpoints(request: Request) -> JSONResponse:
     return JSONResponse(
         {"endpoints": [{
-            "url":       config.PUBLIC_SSE_URL,
-            "transport": "sse",
+            "url":       config.PUBLIC_MCP_URL,
+            "transport": "streamable-http",
             "name":      "MINT Protocol MCP",
         }]},
         headers={"Cache-Control": "public, max-age=300"},
     )
 
 
+async def _live_tools() -> list:
+    """The registered tools in MCP-SDK shape ({name, description, inputSchema}),
+    built from FastMCP's live definitions so the card never drifts from the code."""
+    res = mcp.list_tools()
+    if inspect.iscoroutine(res):
+        res = await res
+    out = []
+    for t in res:
+        out.append({
+            "name": t.name,
+            "description": (getattr(t, "description", "") or "").strip(),
+            "inputSchema": getattr(t, "parameters", None) or {"type": "object"},
+        })
+    return out
+
+
 @mcp.custom_route("/.well-known/mcp/server-card.json", methods=["GET"])
 async def server_card(request: Request) -> JSONResponse:
-    """Full MCP server card consumed by directories (glama, smithery, pulsemcp)."""
+    """MCP server card consumed by directories (Smithery, glama, pulsemcp).
+
+    Smithery's publish flow reads `serverInfo` + `tools` (MCP-SDK types) from this
+    card to SKIP its connection scan, so the listing populates its tools without a
+    live probe. The server itself speaks Streamable HTTP at /mcp (what Smithery's
+    hosted gateway connects with). Extra fields (tagline, pricing, categories) are
+    ignored by Smithery and used by other directories."""
+    tools = await _live_tools()
     return JSONResponse(
         {
-            "version":   "1.0",
-            "name":      "MINT Protocol — Universal Work Attestation",
-            "tagline":   "The reputation layer for the agent economy.",
+            # ── Smithery-required (and MCP-canonical) ──
+            "serverInfo": {"name": "MINT Protocol — Universal Work Attestation",
+                           "version": "1.0.0"},
+            "authentication": {
+                "type": "http", "scheme": "bearer",
+                "description": ("mint_register and mint_verify are free and need no "
+                                "auth; mint_attest takes an fnet_ Bearer key OR an "
+                                "x402 USDC payment."),
+            },
+            "tools": tools,
+            # ── extra discovery metadata (other directories) ──
+            "version": "1.0",
+            "name": "MINT Protocol — Universal Work Attestation",
+            "tagline": "The reputation layer for the agent economy.",
             "description": (
                 "Register, attest, and verify work for any autonomous agent — "
                 "AI agents, physical machines, IoT devices, services. Persistent "
@@ -150,26 +260,12 @@ async def server_card(request: Request) -> JSONResponse:
                 "records, and trust scores built from verified history. Free to "
                 "register, free to verify, 2¢ to attest."
             ),
-            "serverUrl": config.PUBLIC_SSE_URL,
-            "transport": "sse",
-            "auth": {
-                "type":   "x402_or_api_key",
-                "header": "Authorization",
-                "prefix": "Bearer",
-                "note":   "Free tools need no auth; mint_attest takes x402 USDC or a Forge billing key.",
-            },
-            "tools_count": 3,
-            "tools": [
-                {"name": "mint_register",
-                 "description": "Register any autonomous actor (agent/machine/IoT/service) with a persistent mint_id + Solana wallet. Idempotent. FREE."},
-                {"name": "mint_attest",
-                 "description": "Anchor a tamper-evident record of completed work on Solana mainnet and update the actor's trust score. 0.02 USDC/attestation."},
-                {"name": "mint_verify",
-                 "description": "Query any actor's identity, trust score, and verified on-chain work history. FREE — reputation is never gated."},
-            ],
+            "serverUrl": config.PUBLIC_MCP_URL,
+            "transport": "streamable-http",
+            "tools_count": len(tools),
             "categories": ["agents", "identity", "reputation", "attestation", "blockchain"],
             "pricing": {
-                "model":     "metered",
+                "model": "metered",
                 "free_tier": "Unlimited register + verify, no card",
                 "paid_from": "0.02 USDC per attestation (x402)",
             },
@@ -181,11 +277,35 @@ async def server_card(request: Request) -> JSONResponse:
 
 # ── Entrypoint ───────────────────────────────────────────────────────────────
 
+def build_dual_app():
+    """Serve BOTH transports from one app:
+      • Streamable HTTP at /mcp   — modern clients + Smithery's hosted gateway
+      • legacy SSE at /sse (+ /messages) — existing mcp-remote configs keep working
+    The streamable-http app is primary (carries /mcp + every custom_route); we graft
+    only the two SSE transport routes onto it and chain both lifespans so each
+    transport's session manager starts. New users get /mcp; old users don't break."""
+    import contextlib
+    main_app = mcp.http_app(transport="http", path="/mcp")   # /mcp + custom routes
+    sse_app = mcp.http_app(transport="sse", path="/sse")      # /sse + /messages (+ dup customs)
+    for r in sse_app.routes:
+        if getattr(r, "path", None) in ("/sse", "/messages"):
+            main_app.router.routes.append(r)
+    main_life, sse_life = main_app.router.lifespan_context, sse_app.router.lifespan_context
+
+    @contextlib.asynccontextmanager
+    async def _dual_lifespan(app):
+        async with main_life(app):
+            async with sse_life(app):
+                yield
+    main_app.router.lifespan_context = _dual_lifespan
+    return main_app
+
+
 if __name__ == "__main__":
+    import uvicorn
     logger.info(
         f"MINT Protocol MCP starting on 0.0.0.0:{config.PORT} "
-        f"(forge={config.FORGE_API_URL}, relay={config.MINT_RELAY_URL}, "
-        f"forge_key={forge_client.configured()}, relay_key={mint_client.configured()}, "
-        f"x402={config.X402_ENABLED})"
+        f"(forge={config.FORGE_API_URL}, forge_key={forge_client.configured()}, "
+        f"x402={config.X402_ENABLED}) — dual transport: /mcp (streamable-http) + /sse (legacy)"
     )
-    mcp.run(transport="sse", host="0.0.0.0", port=config.PORT)
+    uvicorn.run(build_dual_app(), host="0.0.0.0", port=config.PORT, log_level="warning")

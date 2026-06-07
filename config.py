@@ -4,17 +4,17 @@ Single source of truth for every external dependency. Nothing here reads a
 secret at import time beyond os.environ; values are plain module globals so
 tools/clients can `from config import FORGE_API_URL` without a settings object.
 
-Required (for the paid attest/verify paths):
-  FORGE_API_KEY     fnet_… internal service key. mint_register calls Forge
-                    /v1/identify under the hood; the agent never sees Forge.
-  MINT_RELAY_KEY    mint_… operator key — MUST be the SAME relay operator that
-                    Forge provisions machines under, so attest/verify operate on
-                    the mint_ids that mint_register minted. If unset, register
-                    still works; attest falls back to Forge /v1/settle and
-                    verify degrades to a clear "relay key not configured" error.
+Forge-only by design: mint-mcp is a thin presentation layer and Forge is the
+single relay key-holder + settlement engine. mint-mcp never talks to the MINT
+relay directly, so there is NO relay key here — only FORGE_API_KEY.
+  mint_register → Forge POST /v1/identify
+  mint_attest   → Forge POST /v1/attest   (Forge settles against the real mint_id)
+  mint_verify   → identity now; Forge trust-read endpoint rolling out next.
+
+Required:
+  FORGE_API_KEY     fnet_… internal service key. The agent never sees Forge.
 
 Optional:
-  MINT_RELAY_URL    Default https://mint-relay-production.up.railway.app
   FORGE_API_URL     Default https://forge.foundrynet.io
   PORT              Default 8080 (Railway injects this)
   REQUEST_TIMEOUT   HTTP timeout seconds, default 30
@@ -32,11 +32,8 @@ def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default)
 
 
-MINT_RELAY_URL = _env("MINT_RELAY_URL", "https://mint-relay-production.up.railway.app").rstrip("/")
 FORGE_API_URL  = _env("FORGE_API_URL", "https://forge.foundrynet.io").rstrip("/")
-
 FORGE_API_KEY  = _env("FORGE_API_KEY")        # fnet_… internal identity key
-MINT_RELAY_KEY = _env("MINT_RELAY_KEY")       # mint_… relay operator key (Forge's)
 
 PORT            = int(_env("PORT", "8080"))
 REQUEST_TIMEOUT = int(_env("REQUEST_TIMEOUT", "30"))
@@ -50,5 +47,5 @@ SOLANA_WALLET  = _env("SOLANA_WALLET", "nFvAMGrVaArW7aozYe2yNRCvC4AmCAwLkQ9pyCQn
 
 # Public SSE endpoint, used in discovery payloads. Railway maps the service
 # domain here; mint.foundrynet.io is the eventual vanity host.
-PUBLIC_SSE_URL = _env("PUBLIC_SSE_URL", "https://mint-mcp-production.up.railway.app/sse")
+PUBLIC_MCP_URL = _env("PUBLIC_MCP_URL", "https://mint-mcp-production.up.railway.app/mcp")
 SOLSCAN_TX_BASE = "https://solscan.io/tx"

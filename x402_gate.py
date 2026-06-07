@@ -1,10 +1,20 @@
-"""x402 pay-per-attest gate for the MINT Protocol MCP server.
+"""x402 pay-per-attest gate for the MINT Protocol MCP server — the Tron model.
 
-Only mint_attest is priced (2¢); mint_register and mint_verify are free and pass
-straight through. This is a FastMCP middleware (same boundary as forge-mcp's
-GatingMiddleware) rather than an HTTP middleware, because the tool name lives in
-the MCP tools/call frame, not the URL — but the x402 `x-payment` header rides the
-same per-message HTTP request, so get_http_headers() can read it.
+Only mint_attest is priced; mint_register and mint_verify are ALWAYS free and
+unauthenticated (they're never in PAID_TOOLS, and the REST routes for them never
+call this gate). Free to join the network, free to check trust, pay per
+attestation — volume is the revenue.
+
+When X402_ENABLED=1, mint_attest requires EITHER of:
+  • Authorization: Bearer fnet_…  — an API key (billed via Forge/Stripe), OR
+  • X-PAYMENT: <x402>             — a 2¢ USDC micropayment (no key needed).
+Either one passes the gate; neither → HTTP 402 / ToolError with x402 requirements.
+
+The same authorize()/capture() helpers back BOTH surfaces: the FastMCP middleware
+(MCP/SSE tool calls) and the REST /v1/attest route (the mint-attest SDK + any HTTP
+client), so the policy can't drift between them. The x402 `x-payment` and
+`authorization` headers ride the per-request HTTP frame, readable via
+get_http_headers() over MCP and request.headers over REST.
 
 GATED + INERT by default — identical posture to Forge's x402 gate, which
 crash-looped once and was fully reverted. DO NOT flip X402_ENABLED casually:
@@ -72,63 +82,99 @@ def _init() -> None:
         _X402 = None
 
 
-def _payment_required_error() -> ToolError:
-    """HTTP-402-equivalent structured payload the agent/LLM can act on."""
-    return ToolError(json.dumps({
+def is_active() -> bool:
+    """True only when x402 is enabled AND the facilitator initialized cleanly.
+    When False the gate is inert — attest is unpriced (key billing only)."""
+    return bool(_ENABLED and _X402 is not None)
+
+
+def payment_required_payload() -> dict:
+    """HTTP-402 body: tells the caller how to pay (x402) or that a key also works."""
+    return {
         "error":   "payment_required",
-        "message": (f"mint_attest costs {config.X402_PRICE_USDC} USDC. Resend with an "
-                    "`X-PAYMENT` header (x402, Solana mainnet, USDC), or call via a "
-                    "Forge billing API key."),
+        "message": (f"mint_attest requires payment: send `Authorization: Bearer fnet_…` "
+                    f"(API key, billed via Stripe) OR an `X-PAYMENT` header "
+                    f"({config.X402_PRICE_USDC} USDC, x402 on Solana mainnet)."),
+        "accepted": ["api_key", "x402"],
         "x402": {
-            "scheme":   "exact",
-            "network":  _SOLANA_MAINNET,
-            "asset":    "USDC",
-            "amount":   config.X402_PRICE_USDC,
-            "pay_to":   config.SOLANA_WALLET,
+            "scheme":  "exact",
+            "network": _SOLANA_MAINNET,
+            "asset":   "USDC",
+            "amount":  config.X402_PRICE_USDC,
+            "pay_to":  config.SOLANA_WALLET,
         },
-    }))
+    }
+
+
+def _has_api_key(authorization: Optional[str]) -> bool:
+    a = (authorization or "").strip()
+    return a.lower().startswith("bearer ") and bool(a[7:].strip())
+
+
+async def authorize(authorization: Optional[str], payment: Optional[str]) -> dict:
+    """Decide whether a mint_attest call may proceed. Returns:
+      {"ok": True,  "method": "api_key"}                — a Bearer key is present
+      {"ok": True,  "method": "x402", "payment": <hdr>} — a payment verified
+      {"ok": False, "error": <402 payload>}             — neither
+
+    The API key isn't validated here — Forge validates it downstream (a bad key
+    fails the attest, so it's never a free ride). x402 is verified with the
+    facilitator BEFORE the work runs; capture() settles it AFTER success.
+    """
+    if not is_active():
+        return {"ok": True, "method": "open"}        # inert → unpriced
+    if _has_api_key(authorization):
+        return {"ok": True, "method": "api_key"}     # billed via Forge/Stripe
+    payment = (payment or "").strip()
+    if not payment:
+        return {"ok": False, "error": payment_required_payload()}
+    try:
+        v = await _X402["client"].verify(
+            payment, pay_to=_X402["pay_to"], network=_X402["network"],
+            asset=_X402["asset"], max_amount_required=_X402["price"])
+        ok = getattr(v, "is_valid", None)
+        ok = ok if ok is not None else (isinstance(v, dict) and v.get("isValid"))
+    except Exception as e:
+        logger.warning(f"x402 verify error: {type(e).__name__}: {e}")
+        return {"ok": False, "error": payment_required_payload()}
+    if not ok:
+        return {"ok": False, "error": payment_required_payload()}
+    return {"ok": True, "method": "x402", "payment": payment}
+
+
+async def capture(payment: Optional[str]) -> None:
+    """Settle a verified x402 payment AFTER the attestation succeeded. Best-effort:
+    the work is already anchored, so a settle hiccup must not fail the call."""
+    if not (is_active() and payment):
+        return
+    try:
+        await _X402["client"].settle(
+            payment, pay_to=_X402["pay_to"], network=_X402["network"])
+    except Exception as e:
+        logger.warning(f"x402 settle failed (attestation already served): {e}")
 
 
 class X402Middleware(Middleware):
-    """Gates mint_attest behind a verified x402 USDC payment. Inert unless armed."""
+    """Gates ONLY mint_attest, accepting an API key OR an x402 payment. Inert
+    unless armed (X402_ENABLED + facilitator initialized)."""
 
     def __init__(self) -> None:
         _init()
 
     async def on_call_tool(self, context: MiddlewareContext, call_next):
-        if not (_ENABLED and _X402 is not None):
+        if not is_active():
             return await call_next(context)          # inert: free for everyone
 
         tool_name = getattr(context.message, "name", None) or ""
         if tool_name not in PAID_TOOLS:
             return await call_next(context)          # register/verify always free
 
-        headers = get_http_headers(include={"x-payment"}) or {}
-        payment = (headers.get("x-payment") or "").strip()
-        if not payment:
-            raise _payment_required_error()
-
-        # Verify the payment with the facilitator BEFORE running the tool.
-        try:
-            v = await _X402["client"].verify(
-                payment, pay_to=_X402["pay_to"], network=_X402["network"],
-                asset=_X402["asset"], max_amount_required=_X402["price"])
-            ok = getattr(v, "is_valid", None)
-            ok = ok if ok is not None else (isinstance(v, dict) and v.get("isValid"))
-        except Exception as e:
-            logger.warning(f"x402 verify error: {type(e).__name__}: {e}")
-            raise _payment_required_error()
-        if not ok:
-            raise _payment_required_error()
+        headers = get_http_headers(include={"authorization", "x-payment"}) or {}
+        decision = await authorize(headers.get("authorization"), headers.get("x-payment"))
+        if not decision["ok"]:
+            raise ToolError(json.dumps(decision["error"]))
 
         result = await call_next(context)
-
-        # Capture the funds after the attestation succeeded. Best-effort: the
-        # work is already anchored; a settle hiccup shouldn't fail the call.
-        try:
-            await _X402["client"].settle(
-                payment, pay_to=_X402["pay_to"], network=_X402["network"])
-        except Exception as e:
-            logger.warning(f"x402 settle failed (attestation already served): {e}")
-
+        if decision.get("method") == "x402":
+            await capture(decision.get("payment"))
         return result

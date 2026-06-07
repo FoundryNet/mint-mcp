@@ -9,12 +9,12 @@ description: >-
   built from verified history. The reputation layer for the agent economy.
 
 # Hosted, URL-based ("external") server — Smithery's Gateway proxies user traffic
-# to the upstream Railway SSE endpoint. register + verify are free and need no
-# auth; mint_attest takes x402 USDC or a Forge billing key.
+# to the upstream Railway Streamable HTTP endpoint. register + verify are free and
+# need no auth; mint_attest takes x402 USDC or a Forge billing key.
 startCommand:
   type: http
-  url: "https://mint-mcp-production.up.railway.app/sse"
-  transport: sse
+  url: "https://mint-mcp-production.up.railway.app/mcp"
+  transport: streamable-http
   configSchema:
     type: object
     properties:

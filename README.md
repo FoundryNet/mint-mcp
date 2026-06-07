@@ -11,8 +11,9 @@ horizontal trust infrastructure beneath the entire agent economy.
 
 > Distinct from [FoundryNet Forge](https://foundrynet.io) (industrial machines).
 > Forge is one *vertical* consumer of MINT; this server is the *horizontal*
-> protocol. It rebuilds nothing — identity reuses the Forge API, settlement and
-> trust reuse the existing MINT relay. Agents are the users; there is no web UI.
+> protocol. **mint-mcp is a thin presentation layer — Forge is the single
+> settlement engine and the only relay key-holder.** mint-mcp never touches the
+> MINT relay; it only calls Forge. Agents are the users; there is no web UI.
 
 ## The three tools
 
@@ -25,31 +26,38 @@ horizontal trust infrastructure beneath the entire agent economy.
 The network grows on free identity + free verification; revenue comes from
 attestation volume.
 
-## How it maps onto existing infrastructure
+## How it maps onto Forge (one key-holder, one relay path)
 
 - **`mint_register` → Forge `POST /v1/identify`.** An actor is mapped onto the
   `(oem, model, serial)` identity triple Forge already understands:
   `oem = actor_type`, `model = name`, `serial = uuid5(actor_type, name, operator)`
-  (stable, so registration is idempotent and per-operator-scoped). Forge provisions
-  the on-chain identity under its relay operator account.
-- **`mint_attest` → MINT relay `POST /settle`.** Computes
-  `data_hash = sha256(canonical attestation payload)` as the off-chain proof, then
-  settles on Solana mainnet (`record_job → update_trust → settle_job`). If
-  `MINT_RELAY_KEY` is unset it falls back to Forge `POST /v1/settle`, which holds
-  the relay operator credentials internally — so attest anchors on-chain either way.
-- **`mint_verify` → MINT relay `GET /history/{mint_id}`.** Trust score, total
-  attestations, earnings, and recent on-chain attestations (each with a Solscan
-  `verify_url`). Semantic labels (actor type/name/work-type breakdown) come from an
-  in-process registry and may be `null` for actors first seen on another instance —
-  the on-chain record is still fully verifiable.
+  (stable → idempotent, per-operator-scoped). Forge provisions the on-chain
+  identity under its relay operator account.
+- **`mint_attest` → Forge `POST /v1/attest`.** mint-mcp maps `work_type` to a
+  settlement `complexity` (500–2000) and posts the work to Forge. Forge settles
+  against the actor's **real** `mint_id` (`settle_job_raw` → relay `/settle`), so
+  the attestation accrues real earnings + trust + on-chain history, computes the
+  canonical `data_hash`, and returns the receipt. mint-mcp holds no relay key.
+- **`mint_verify` → identity now; trust read rolling out.** The on-chain
+  trust-read endpoint lives in Forge and is a follow-up pass. Until it lands,
+  `mint_verify` returns the actor's identity + registration (from an in-process
+  label cache) with `trust_score`/`total_attestations` reported as `"pending"` —
+  not faked. Attestations are already permanent on-chain and will surface here once
+  the Forge read endpoint ships.
+
+## Forge dependency
+
+`mint_attest` requires **`POST /v1/attest`** on `forge.foundrynet.io` (added to
+forge-prod alongside this build — reuses `mint_relay.settle_job_raw` +
+`record_event`, ownership-checked via `forge_agent_machines`). It must be
+**deployed to Forge prod** before live attestation works. `mint_register` already
+works against the existing `/v1/identify`.
 
 ## Configuration (env)
 
 | Var | Required | Default | Purpose |
 |-----|----------|---------|---------|
-| `FORGE_API_KEY` | for register | — | `fnet_` internal service key for `/v1/identify` |
-| `MINT_RELAY_KEY` | for attest/verify | — | `mint_` relay **operator** key — must be the operator Forge provisions under |
-| `MINT_RELAY_URL` | no | `https://mint-relay-production.up.railway.app` | |
+| `FORGE_API_KEY` | yes | — | `fnet_` internal service key — the only secret mint-mcp needs |
 | `FORGE_API_URL` | no | `https://forge.foundrynet.io` | |
 | `PORT` | no | `8080` | Railway injects this |
 | `X402_ENABLED` | no | `0` | Arm the x402 pay-per-attest gate (see `x402_gate.py`) |
@@ -57,18 +65,15 @@ attestation volume.
 | `CDP_API_KEY` | iff x402 | — | Coinbase CDP facilitator key (mainnet) |
 | `SOLANA_WALLET` | no | `nFvAMGr…na1s` | base58 pay-to for x402 settlement |
 
-> `MINT_RELAY_KEY` was **not** in the original build brief but is required for the
-> direct relay path. Without it, `mint_register` still works and `mint_attest`
-> falls back to Forge; `mint_verify` returns a clear `not_configured`. Wire it to
-> Forge's internal relay operator key to light up the full loop.
+> **No relay key by design.** Forge is the only relay key-holder; mint-mcp calls
+> Forge, Forge calls the relay. One key, one settlement path, no duplicated logic.
 
 ## Run locally
 
 ```bash
 cd ~/mint-protocol-mcp
 pip install -r requirements.txt
-export FORGE_API_KEY=fnet_...          # for register
-export MINT_RELAY_KEY=mint_...         # for attest/verify (optional tonight)
+export FORGE_API_KEY=fnet_...          # the only secret needed
 python server.py                       # SSE on :8080
 ```
 
@@ -89,7 +94,8 @@ claude mcp add mint-protocol -- npx -y mcp-remote http://localhost:8080/sse
 
 Railway service **`mint-mcp`** in the `insightful-gratitude` project. SSE at
 `/sse`, health at `/health`, eventual vanity host `mint.foundrynet.io`. Set
-`FORGE_API_KEY` and `MINT_RELAY_KEY` in the service variables before traffic.
+**`FORGE_API_KEY`** in the service variables before traffic — that's the only
+secret. Deploy Forge's `POST /v1/attest` to prod first so live attestation works.
 
 ## Layout
 
@@ -99,8 +105,7 @@ tools/
   register.py      mint_register
   attest.py        mint_attest
   verify.py        mint_verify
-forge_client.py    Forge API client (identity)
-mint_client.py     MINT relay client (settle / history / trust)
+forge_client.py    Forge API client (identify + attest) — the only upstream
 actor_registry.py  best-effort mint_id → actor label cache (no DB)
 x402_gate.py       x402 pay-per-attest middleware (INERT unless X402_ENABLED)
 config.py          env-driven config

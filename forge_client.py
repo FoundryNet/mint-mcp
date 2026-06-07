@@ -15,16 +15,19 @@ import config
 from http_util import request_json
 
 
-def _headers() -> dict:
+def _headers(api_key: Optional[str] = None) -> dict:
+    # Per-request key (e.g. an SDK developer's fnet_ key passed through from the
+    # REST surface) overrides the server's service key. register + attest for one
+    # actor MUST use the SAME key so Forge's ownership check holds.
     return {
-        "Authorization": f"Bearer {config.FORGE_API_KEY}",
+        "Authorization": f"Bearer {api_key or config.FORGE_API_KEY}",
         "Content-Type":  "application/json",
         "User-Agent":    "MINT-Protocol-MCP/1.0",
     }
 
 
-def configured() -> bool:
-    return bool(config.FORGE_API_KEY)
+def configured(api_key: Optional[str] = None) -> bool:
+    return bool(api_key or config.FORGE_API_KEY)
 
 
 async def identify(
@@ -34,6 +37,7 @@ async def identify(
     *,
     site: Optional[str] = None,
     metadata: Optional[dict] = None,
+    api_key: Optional[str] = None,
 ) -> dict:
     """POST /v1/identify — provision or look up a mint_id for one actor.
 
@@ -48,18 +52,37 @@ async def identify(
         body["metadata"] = metadata
     return await request_json(
         "POST", f"{config.FORGE_API_URL}/v1/identify",
-        headers=_headers(), body=body, timeout=config.REQUEST_TIMEOUT,
+        headers=_headers(api_key), body=body, timeout=config.REQUEST_TIMEOUT,
     )
 
 
-async def settle(payload: dict) -> dict:
-    """POST /v1/settle — fallback anchor path when MINT_RELAY_KEY is absent.
+async def attest(
+    mint_id: str,
+    duration_seconds: int,
+    *,
+    complexity: int = 1000,
+    work_type: Optional[str] = None,
+    input_hash: Optional[str] = None,
+    output_hash: Optional[str] = None,
+    summary: Optional[str] = None,
+    metadata: Optional[dict] = None,
+    api_key: Optional[str] = None,
+) -> dict:
+    """POST /v1/attest — settle work against the actor's OWN mint_id.
 
-    Forge holds the relay operator credentials internally, so it can settle a
-    mint_id it provisioned. Used by mint_attest only when the direct relay path
-    isn't configured. Returns {tx_signature, verify_url, …}.
+    Forge is the single relay key-holder: it settles on the relay against the
+    real mint_id (accruing trust + earnings + history), computes the canonical
+    data_hash, and returns {attestation_id, data_hash, tx_signature, verify_url,
+    trust_score, reward, settled, …}. mint-mcp never touches the relay.
     """
+    body: dict = {"mint_id": mint_id, "duration_seconds": duration_seconds,
+                  "complexity": complexity}
+    if work_type is not None:   body["work_type"] = work_type
+    if input_hash is not None:  body["input_hash"] = input_hash
+    if output_hash is not None: body["output_hash"] = output_hash
+    if summary is not None:     body["summary"] = summary
+    if metadata is not None:    body["metadata"] = metadata
     return await request_json(
-        "POST", f"{config.FORGE_API_URL}/v1/settle",
-        headers=_headers(), body=payload, timeout=config.REQUEST_TIMEOUT,
+        "POST", f"{config.FORGE_API_URL}/v1/attest",
+        headers=_headers(api_key), body=body, timeout=config.REQUEST_TIMEOUT,
     )
