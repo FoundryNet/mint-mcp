@@ -1,11 +1,11 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.json",
-  "name": "io.github.foundrynet/mint-protocol-mcp",
+  "name": "io.github.foundrynet/mint-mcp",
   "title": "MINT Protocol — Universal Work Attestation",
   "description": "Register, attest, and verify work for any autonomous agent. Persistent cryptographic identity, tamper-evident on-chain work records, and trust scores built from verified history. The reputation layer for the agent economy.",
   "version": "1.0.0",
   "repository": {
-    "url": "https://github.com/foundrynet/mint-protocol-mcp",
+    "url": "https://github.com/foundrynet/mint-mcp",
     "source": "github"
   },
   "websiteUrl": "https://mint.foundrynet.io",
