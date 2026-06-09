@@ -35,6 +35,14 @@ def _env(name: str, default: str = "") -> str:
 FORGE_API_URL  = _env("FORGE_API_URL", "https://forge.foundrynet.io").rstrip("/")
 FORGE_API_KEY  = _env("FORGE_API_KEY")        # fnet_… internal identity key
 
+# Supabase — the trust layer (Layers 6+7: ratings, recommendations, discovery,
+# trust scores) lives in the Foundry Supabase project. mint-mcp reads/writes the
+# mint_* tables directly via PostgREST with the service-role key. Identity +
+# attestation still go through Forge; only the trust/discovery aggregates are
+# stored here. Empty values ⇒ the trust features degrade gracefully to identity.
+SUPABASE_URL          = _env("SUPABASE_URL", "https://hjiozatcmozqddhaklkh.supabase.co").rstrip("/")
+SUPABASE_SERVICE_KEY  = _env("SUPABASE_SERVICE_KEY")   # service-role JWT (server-side only)
+
 PORT            = int(_env("PORT", "8080"))
 REQUEST_TIMEOUT = int(_env("REQUEST_TIMEOUT", "30"))
 

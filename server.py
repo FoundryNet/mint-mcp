@@ -30,6 +30,7 @@ from starlette.responses import JSONResponse
 import config
 import core
 import forge_client
+import supa
 import tools
 import x402_gate
 from x402_gate import X402Middleware
@@ -63,10 +64,12 @@ async def health(request: Request) -> JSONResponse:
         "status":            "ok",
         "service":           "mint-protocol-mcp",
         "transport":         "streamable-http",
-        "tools":             ["mint_register", "mint_attest", "mint_verify"],
+        "tools":             ["mint_register", "mint_attest", "mint_verify",
+                              "mint_rate", "mint_recommend", "mint_discover"],
         "forge_api_url":     config.FORGE_API_URL,
         "forge_key_configured":  forge_client.configured(),
-        "trust_read":        "pending_forge_endpoint",
+        "trust_store":       "supabase" if supa.configured() else "unconfigured",
+        "trust_layer":       "live" if supa.configured() else "identity_only",
         "x402_enabled":      config.X402_ENABLED,
     })
 
@@ -85,7 +88,9 @@ async def ping(request: Request) -> JSONResponse:
 # Forge so the actor + its attestations belong to THEIR account.
 
 _ERR_STATUS = {"bad_request": 400, "not_configured": 503,
-               "not_found": 404, "attest_failed": 502}
+               "not_found": 404, "attest_failed": 502,
+               "forbidden": 403, "conflict": 409,
+               "rate_failed": 502, "recommend_failed": 502}
 
 
 def _resp(d: dict) -> JSONResponse:
@@ -154,6 +159,38 @@ async def rest_verify(request: Request) -> JSONResponse:
         b.get("mint_id"), b.get("actor_name"), b.get("actor_type")))
 
 
+@mcp.custom_route("/v1/rate", methods=["POST"])
+async def rest_rate(request: Request) -> JSONResponse:
+    # FREE; the Bearer fnet_ key identifies the rater (bound to an owned actor).
+    b = await _json_body(request)
+    return _resp(await core.do_rate(
+        b.get("attestation_id", ""), b.get("rated_mint_id", ""), b.get("score"),
+        rater_mint_id=b.get("rater_mint_id"), accuracy=b.get("accuracy", True),
+        would_use_again=b.get("would_use_again", True), tags=b.get("tags"),
+        comment=b.get("comment"), api_key=_bearer(request)))
+
+
+@mcp.custom_route("/v1/recommend", methods=["POST"])
+async def rest_recommend(request: Request) -> JSONResponse:
+    # FREE; the Bearer fnet_ key identifies the recommender.
+    b = await _json_body(request)
+    return _resp(await core.do_recommend(
+        b.get("recommended_mint_id", ""), b.get("context", ""), b.get("score"),
+        note=b.get("note"), recommender_mint_id=b.get("recommender_mint_id"),
+        attestation_id=b.get("attestation_id"), api_key=_bearer(request)))
+
+
+@mcp.custom_route("/v1/discover", methods=["POST"])
+async def rest_discover(request: Request) -> JSONResponse:
+    # FREE, no auth — discovery is open to any agent.
+    b = await _json_body(request)
+    return _resp(await core.do_discover(
+        capability=b.get("capability"), actor_type=b.get("actor_type"),
+        min_trust_score=b.get("min_trust_score", 0),
+        min_recommendations=b.get("min_recommendations", 0),
+        sort_by=b.get("sort_by", "trust_score"), limit=b.get("limit", 10)))
+
+
 # ── Discovery: A2A agent card ────────────────────────────────────────────────
 
 _AGENT_CARD = {
@@ -169,6 +206,9 @@ _AGENT_CARD = {
         "work_attestation",
         "trust_verification",
         "reputation_scoring",
+        "peer_rating",
+        "peer_recommendation",
+        "trust_ranked_discovery",
     ],
     "tools": [
         {"name": "mint_register",
@@ -178,14 +218,23 @@ _AGENT_CARD = {
          "description": "Attest completed work with tamper-evident on-chain record",
          "pricing": "0.02 USDC per attestation"},
         {"name": "mint_verify",
-         "description": "Query any actor's trust score and verified work history",
+         "description": "Query any actor's full trust profile and verified work history",
+         "pricing": "free"},
+        {"name": "mint_rate",
+         "description": "Rate a completed attestation 1-5; updates the actor's trust score",
+         "pricing": "free"},
+        {"name": "mint_recommend",
+         "description": "Endorse an actor you've worked with in a named context",
+         "pricing": "free"},
+        {"name": "mint_discover",
+         "description": "Trust-ranked search of the actor directory by capability",
          "pricing": "free"},
     ],
     "protocols": {
         "mcp": {
             "endpoint": config.PUBLIC_MCP_URL,
             "transport": "streamable-http",
-            "tools_count": 3,
+            "tools_count": 6,
         },
         "x402": {
             "supported": True,

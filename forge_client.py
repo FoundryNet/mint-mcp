@@ -56,6 +56,51 @@ async def identify(
     )
 
 
+async def autonomous_register(
+    actor_type: str,
+    name: str,
+    *,
+    capabilities: Optional[list] = None,
+    operator: Optional[str] = None,
+    metadata: Optional[dict] = None,
+    api_key: Optional[str] = None,
+) -> dict:
+    """POST /v1/autonomous-register — anonymous identity + scoped-key provisioning.
+
+    Forge generates a fresh synthetic owner for this actor, registers it on the
+    relay, mints a scoped+capped+revocable fnet_ key, and returns
+    {mint_id, api_key, ...}. No human, no signup. The (optional) key here is the
+    MCP server's own service key and is ignored by the anonymous endpoint.
+    """
+    body: dict = {"name": name, "actor_type": actor_type}
+    if capabilities is not None:
+        body["capabilities"] = capabilities
+    if operator is not None:
+        body["operator"] = operator
+    if metadata is not None:
+        body["metadata"] = metadata
+    return await request_json(
+        "POST", f"{config.FORGE_API_URL}/v1/autonomous-register",
+        headers=_headers(api_key), body=body, timeout=config.REQUEST_TIMEOUT,
+    )
+
+
+async def whoami(api_key: str) -> dict:
+    """GET /v1/whoami — resolve an fnet_ key to its Forge account.
+
+    Returns {user_id, is_demo, has_subscription, …} on a valid key, or
+    {"error": "http_401", …} when the key is missing/invalid. Used by the trust
+    layer to bind a rater/recommender to the identities their key actually owns
+    (anti-spam: only a real account can rate, and only as an actor it controls).
+    """
+    if not api_key:
+        return {"error": "bad_request", "detail": "api_key required for whoami"}
+    return await request_json(
+        "GET", f"{config.FORGE_API_URL}/v1/whoami",
+        headers=_headers(api_key), timeout=config.REQUEST_TIMEOUT,
+    )
+
+
 async def attest(
     mint_id: str,
     duration_seconds: int,

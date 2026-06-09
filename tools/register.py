@@ -19,6 +19,8 @@ def register(mcp) -> None:
         capabilities: Optional[list] = None,
         operator: Optional[str] = None,
         metadata: Optional[dict] = None,
+        mcp_endpoint: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> dict:
         """Register any autonomous actor — AI agent, physical machine, IoT
         device, or backend service — with a persistent cryptographic identity on
@@ -32,8 +34,14 @@ def register(mcp) -> None:
         Args:
             actor_type: one of "ai_agent", "machine", "iot_device", "service".
             name: human-readable actor name, e.g. "ResearchBot-7".
-            capabilities: optional capability tags, e.g. ["web_research"].
+            capabilities: optional capability tags, e.g. ["web_research"]. Used by
+                mint_discover so other agents can find you.
             operator: optional owning company/operator name (scopes the identity).
             metadata: optional free-form JSON attached to the identity.
+            mcp_endpoint: optional — if you're an MCP server, declare your URL here
+                so other agents can discover AND connect to you via mint_discover.
+            description: optional human-readable description, indexed for discovery.
         """
-        return await core.do_register(actor_type, name, capabilities, operator, metadata)
+        return await core.do_register(actor_type, name, capabilities, operator,
+                                      metadata, mcp_endpoint=mcp_endpoint,
+                                      description=description)
