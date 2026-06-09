@@ -174,7 +174,9 @@ async def _autonomous_register(actor_type: str, name: str,
         "api_key": resp.get("api_key"),           # one-shot — the agent MUST persist it
         "actor_type": actor_type, "name": name,
         "capabilities": capabilities or [], "operator": operator,
-        "registered": True, "autonomous": True,
+        "mcp_endpoint": mcp_endpoint, "description": description,
+        "registered": True, "autonomous": True, "trust_score": 50,
+        "discoverable": supa.configured(),
         "wallet_address": resp.get("wallet_address"),
         "daily_attest_limit": resp.get("daily_attest_limit"),
         "note": ("Identity + key provisioned with no human in the loop. PERSIST "

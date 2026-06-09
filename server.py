@@ -127,6 +127,7 @@ async def rest_register(request: Request) -> JSONResponse:
     return _resp(await core.do_register(
         b.get("actor_type", "ai_agent"), b.get("name", ""),
         b.get("capabilities"), b.get("operator"), b.get("metadata"),
+        mcp_endpoint=b.get("mcp_endpoint"), description=b.get("description"),
         api_key=_bearer(request)))
 
 
