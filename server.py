@@ -347,7 +347,10 @@ async def server_card(request: Request) -> JSONResponse:
                 "free_tier": "Unlimited register + verify, no card",
                 "paid_from": "0.02 USDC per attestation (x402)",
             },
-            "docs_url": "https://foundrynet.io/docs",
+            # API reference (human HTML) + machine-readable spec — so any agent
+            # fetching the server card auto-discovers how to call the REST API.
+            "docs_url": f"{docs.BASE_URL}/docs",
+            "openapi_url": f"{docs.BASE_URL}/openapi.json",
         },
         headers={"Cache-Control": "public, max-age=300"},
     )
