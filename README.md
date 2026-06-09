@@ -84,16 +84,17 @@ curl -s localhost:8080/health | jq
 curl -s localhost:8080/.well-known/agent-card.json | jq
 ```
 
-Connect Claude Desktop / Cursor / Claude Code via `mcp-remote`:
+Connect Claude Desktop / Cursor / Claude Code via `mcp-remote` (Streamable HTTP at `/mcp`):
 
 ```bash
-claude mcp add mint-protocol -- npx -y mcp-remote http://localhost:8080/sse
+claude mcp add mint-protocol -- npx -y mcp-remote https://mint-mcp-production.up.railway.app/mcp
 ```
 
 ## Deploy
 
-Railway service **`mint-mcp`** in the `insightful-gratitude` project. SSE at
-`/sse`, health at `/health`, eventual vanity host `mint.foundrynet.io`. Set
+Railway service **`mint-mcp`** in the `insightful-gratitude` project. Streamable
+HTTP at `/mcp` (legacy SSE at `/sse`), health at `/health`, eventual vanity host
+`mint.foundrynet.io`. Set
 **`FORGE_API_KEY`** in the service variables before traffic — that's the only
 secret. Deploy Forge's `POST /v1/attest` to prod first so live attestation works.
 
