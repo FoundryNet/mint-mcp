@@ -8,10 +8,13 @@ Trust is a 0–100 weighted blend of an actor's verified history:
     recommendations (15%) peer endorsements                    (saturates at 10)
     recency (15%)        recent activity matters more          (decays over 30d)
 
-A brand-new actor with no attestations, ratings, or recommendations scores a
-neutral 50 (matching the seeded default) — not 0. Once it has ANY signal the
-blend takes over. Unknown sub-signals (e.g. no ratings yet) contribute a neutral
-50 for their component rather than a misleading 0 or 100.
+Core principle — ABSENCE OF DATA IS NOT NEGATIVE EVIDENCE. An actor with zero
+attestations has *unknown* volume, not zero volume; unknown scores NEUTRAL (50),
+not 0. Every axis sits at 50 when there's no data, so a brand-new actor scores
+50. Positive evidence (attestations, good ratings, recommendations, recent
+activity) pushes axes above 50; only genuinely negative evidence (low ratings,
+high rating variance) pushes below. Consequence: a 5★ recommendation on a fresh
+actor nudges trust ABOVE neutral — it can never drop an actor below 50.
 
 Recompute is cheap and runs on every new rating/recommendation; the result is
 cached in mint_trust_scores and served by mint_verify / mint_discover.
@@ -57,28 +60,43 @@ def _max_iso(a: Optional[str], b: Optional[str]) -> Optional[str]:
 
 
 def _recency_score(last_active: Optional[str]) -> float:
+    """Recency is a positive-only signal: unknown/stale ⇒ NEUTRAL (50), recent
+    activity climbs toward 100. Dormancy is *absence* of recent positive signal,
+    not negative evidence — so it floors at NEUTRAL, never 0."""
     dt = _parse_iso(last_active)
     if dt is None:
-        return NEUTRAL          # no activity timestamp ⇒ unknown, neutral
+        return NEUTRAL          # no activity timestamp ⇒ unknown
     age_days = (datetime.now(timezone.utc) - dt).total_seconds() / 86400.0
     if age_days <= 0:
         return 100.0
     if age_days >= RECENCY_WINDOW_DAYS:
-        return 0.0
-    return round((1.0 - age_days / RECENCY_WINDOW_DAYS) * 100.0, 1)
+        return NEUTRAL          # stale ⇒ unknown current status, not negative
+    return round(NEUTRAL + (1.0 - age_days / RECENCY_WINDOW_DAYS) * 50.0, 1)
 
 
 def compute(n_attest: int, scores: list, n_recs: int,
-            last_active: Optional[str]) -> float:
-    """Pure scoring function — given the gathered signals, return 0–100."""
+            last_active: Optional[str], rec_scores: Optional[list] = None) -> float:
+    """Pure scoring function — return 0–100.
+
+    Principle (absence ≠ negative): every axis sits at NEUTRAL (50) when there's
+    no data, so an actor with no history scores 50 — *unknown*, not bad. Positive
+    evidence pushes an axis above 50; only genuinely negative evidence (low
+    ratings, high rating variance) pushes below. Thus a 5★ recommendation on a
+    brand-new actor nudges trust ABOVE neutral, and trust only drops below 50
+    when real negative signal arrives.
+
+      volume (30%)         50 (unknown) → 100 as attestations accumulate
+      rating (30%)         50 (none); 5★→100, 3★→60, 1★→20  (can go below 50)
+      consistency (10%)    50 (<2 ratings); low variance high, high variance dips
+      recommendation (15%) 50 (none) → 100, scaled by endorsement quality
+      recency (15%)        50 (unknown/stale) → 100 (active now)
+    """
     total_ratings = len(scores)
 
-    # No signal at all ⇒ neutral starting point (don't punish new actors).
-    if n_attest == 0 and total_ratings == 0 and n_recs == 0:
-        return NEUTRAL
+    # Volume is positive-only: no attestations = UNKNOWN (50), not zero.
+    volume = NEUTRAL + 50.0 * min(1.0, float(n_attest) / VOLUME_FULL)
 
-    volume = min(100.0, float(n_attest) / VOLUME_FULL * 100.0)
-
+    # Ratings are the one axis that carries negative evidence.
     rating = (sum(scores) / total_ratings / 5.0) * 100.0 if total_ratings else NEUTRAL
 
     if total_ratings >= 2:
@@ -87,7 +105,14 @@ def compute(n_attest: int, scores: list, n_recs: int,
     else:
         consistency = NEUTRAL   # <2 ratings ⇒ variance unknown
 
-    recommendation = min(100.0, float(n_recs) * (100.0 / REC_FULL))
+    # Recommendations are positive-only endorsements: none = UNKNOWN (50), climbing
+    # toward 100 with count, weighted by average endorsement score (5★ counts full).
+    if n_recs:
+        avg_quality = (sum(rec_scores) / len(rec_scores) / 5.0) if rec_scores else 1.0
+        recommendation = NEUTRAL + 50.0 * min(1.0, float(n_recs) / REC_FULL) * avg_quality
+    else:
+        recommendation = NEUTRAL
+
     recency = _recency_score(last_active)
 
     trust = (volume * 0.30 + rating * 0.30 + consistency * 0.10
@@ -109,13 +134,15 @@ async def recompute(mint_id: str) -> dict:
 
         recs = await supa.recommendations_for(mint_id)
         n_recs = len(recs)
+        rec_scores = [int(r["score"]) for r in recs
+                      if isinstance(r.get("score"), (int, float))]
         n_recs_given = await supa.count_recommendations_given(mint_id)
 
         last_active = await supa.attestation_last_active(mint_id)
         if ratings:
             last_active = _max_iso(last_active, ratings[0].get("created_at"))
 
-        score = compute(n_attest, scores, n_recs, last_active)
+        score = compute(n_attest, scores, n_recs, last_active, rec_scores)
         work_types = await supa.attestation_work_types(mint_id)
 
         fields = {
