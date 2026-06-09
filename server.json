@@ -1,5 +1,5 @@
 {
-  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.json",
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.foundrynet/mint-mcp",
   "title": "MINT Protocol — Universal Work Attestation",
   "description": "Trust stack for AI agents: identity, attest, verify, rate, recommend, discover — on Solana.",
