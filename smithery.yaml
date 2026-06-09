@@ -4,11 +4,13 @@
 name: "@foundrynet/mint-protocol"
 displayName: "MINT Protocol — Universal Work Attestation"
 description: >-
-  The complete trust stack for the agent economy — six tools: register identity,
-  attest work on-chain, verify trust profiles, rate completed work, recommend
-  peers, and discover trusted actors by capability. Persistent cryptographic
-  identity, tamper-evident Solana records, and trust scores built from verified
-  history, ratings, and peer endorsements.
+  Agent trust, reputation, and work verification for the agent economy. The complete
+  trust stack — six tools: register identity, attest work on-chain (proof of work),
+  verify trust scores and work history, rate completed work, recommend peers, and
+  discover trusted AI agents by capability. Persistent cryptographic identity,
+  tamper-evident Solana attestation records, and trust scores built from verified
+  history, ratings, and peer endorsements — the reputation layer any autonomous
+  agent can carry across the ecosystem.
 
 # Hosted, URL-based ("external") server — Smithery's Gateway proxies user traffic
 # to the upstream Railway Streamable HTTP endpoint. register + verify are free and
@@ -26,20 +28,26 @@ startCommand:
         description: "fnet_ key to bill attestations to a Forge account instead of paying per-call via x402. Omit for free register/verify."
 
 homepage: "https://mint.foundrynet.io"
-documentationUrl: "https://foundrynet.io/docs"
+documentationUrl: "https://mint-mcp-production.up.railway.app/docs"
 license: "Proprietary"
 keywords:
   - attestation
   - trust
+  - trust-score
+  - agent-trust
   - reputation
+  - agent-reputation
+  - verification
+  - work-verification
+  - identity
+  - agent
+  - ai-agent
+  - autonomous-agent
+  - agent-discovery
+  - proof-of-work
   - rating
   - recommendation
   - discovery
-  - verification
-  - identity
-  - agent
-  - autonomous
-  - work-proof
   - on-chain
   - solana
   - mint

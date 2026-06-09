@@ -5,23 +5,32 @@
   "description": "Trust stack for AI agents: identity, attest, verify, rate, recommend, discover — on Solana.",
   "version": "1.1.0",
   "repository": {
-    "url": "https://github.com/foundrynet/mint-mcp",
+    "url": "https://github.com/FoundryNet/mint-mcp",
     "source": "github"
   },
   "websiteUrl": "https://mint.foundrynet.io",
   "keywords": [
     "attestation",
     "trust",
+    "trust-score",
+    "agent-trust",
     "reputation",
+    "agent-reputation",
     "verification",
+    "work-verification",
     "identity",
     "agent",
-    "autonomous",
+    "ai-agent",
+    "autonomous-agent",
+    "agent-discovery",
+    "proof-of-work",
     "work-proof",
-    "receipt",
+    "rating",
+    "recommendation",
+    "discovery",
     "on-chain",
     "solana",
-    "MINT"
+    "mint"
   ],
   "remotes": [
     {
