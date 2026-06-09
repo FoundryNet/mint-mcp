@@ -25,10 +25,11 @@ import os
 
 from fastmcp import FastMCP
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse
 
 import config
 import core
+import docs
 import forge_client
 import supa
 import tools
@@ -71,6 +72,8 @@ async def health(request: Request) -> JSONResponse:
         "trust_store":       "supabase" if supa.configured() else "unconfigured",
         "trust_layer":       "live" if supa.configured() else "identity_only",
         "x402_enabled":      config.X402_ENABLED,
+        "docs_url":          f"{docs.BASE_URL}/docs",
+        "openapi_url":       f"{docs.BASE_URL}/openapi.json",
     })
 
 
@@ -78,6 +81,25 @@ async def health(request: Request) -> JSONResponse:
 async def ping(request: Request) -> JSONResponse:
     """Liveness for hosted runtimes that probe /ping (mcp-proxy etc.)."""
     return JSONResponse({"status": "ok"})
+
+
+# ── API reference (human + machine) ──────────────────────────────────────────
+# Both generated from docs.ENDPOINTS so the prose and the spec never drift.
+
+@mcp.custom_route("/docs", methods=["GET"])
+async def api_docs(request: Request) -> HTMLResponse:
+    """Styled HTML API reference — readable by a human in a browser AND fetchable
+    by an agent for endpoint discovery."""
+    return HTMLResponse(docs.render_docs(),
+                        headers={"Cache-Control": "public, max-age=300"})
+
+
+@mcp.custom_route("/openapi.json", methods=["GET"])
+async def openapi_spec(request: Request) -> JSONResponse:
+    """OpenAPI 3.0 spec — what Swagger/Postman/GPT Actions/agent frameworks import
+    to auto-discover the REST API."""
+    return JSONResponse(docs.build_openapi(),
+                        headers={"Cache-Control": "public, max-age=300"})
 
 
 # ── REST surface (for the mint-attest Python SDK + any HTTP client) ──────────
