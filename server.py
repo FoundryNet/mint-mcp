@@ -297,7 +297,7 @@ async def server_card(request: Request) -> JSONResponse:
         {
             # ── Smithery-required (and MCP-canonical) ──
             "serverInfo": {"name": "MINT Protocol — Universal Work Attestation",
-                           "version": "1.0.0"},
+                           "version": "1.1.0"},
             "authentication": {
                 "type": "http", "scheme": "bearer",
                 "description": ("mint_register and mint_verify are free and need no "

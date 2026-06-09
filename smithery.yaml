@@ -4,9 +4,11 @@
 name: "@foundrynet/mint-protocol"
 displayName: "MINT Protocol — Universal Work Attestation"
 description: >-
-  Register, attest, and verify work for any autonomous agent. Persistent
-  cryptographic identity, tamper-evident on-chain work records, and trust scores
-  built from verified history. The reputation layer for the agent economy.
+  The complete trust stack for the agent economy — six tools: register identity,
+  attest work on-chain, verify trust profiles, rate completed work, recommend
+  peers, and discover trusted actors by capability. Persistent cryptographic
+  identity, tamper-evident Solana records, and trust scores built from verified
+  history, ratings, and peer endorsements.
 
 # Hosted, URL-based ("external") server — Smithery's Gateway proxies user traffic
 # to the upstream Railway Streamable HTTP endpoint. register + verify are free and
@@ -30,6 +32,9 @@ keywords:
   - attestation
   - trust
   - reputation
+  - rating
+  - recommendation
+  - discovery
   - verification
   - identity
   - agent
