@@ -18,10 +18,19 @@ Optional:
   FORGE_API_URL     Default https://forge.foundrynet.io
   PORT              Default 8080 (Railway injects this)
   REQUEST_TIMEOUT   HTTP timeout seconds, default 30
-  X402_ENABLED      "1" to arm the x402 pay-per-attest gate (default "0" = inert)
-  X402_PRICE_USDC   Price per attest under x402, default "0.02"
-  CDP_API_KEY       Coinbase CDP facilitator key (required iff X402_ENABLED)
-  SOLANA_WALLET     base58 pay-to address for x402 settlement
+  X402_ENABLED      "true" to arm the pay-per-attest gate (DEFAULT true; the
+                    kill switch — set "false" to make attest free again)
+  ATTEST_PRICE_USDC Price per attest in USDC, default "0.02"
+  PAYMENT_RECIPIENT base58 operations wallet that must receive the USDC (the gate
+                    is inert until this is set; defaults to SOLANA_WALLET)
+  PAYMENT_VERIFY_RPC Solana JSON-RPC used to confirm the payment on-chain
+  PAYMENT_USDC_MINT  SPL mint accepted as payment (default = USDC mainnet)
+  PAYMENT_EXPIRY_SECONDS  Payment freshness + quote window, default 300 (5 min)
+  PAYMENT_CREDIT_TTL_SECONDS  Retry-credit lifetime after a paid-but-failed
+                    attest, default 86400 (24h)
+
+Legacy (the superseded x402-facilitator gate in x402_gate.py — no longer wired):
+  X402_PRICE_USDC, CDP_API_KEY, SOLANA_WALLET
 """
 from __future__ import annotations
 
@@ -46,12 +55,35 @@ SUPABASE_SERVICE_KEY  = _env("SUPABASE_SERVICE_KEY")   # service-role JWT (serve
 PORT            = int(_env("PORT", "8080"))
 REQUEST_TIMEOUT = int(_env("REQUEST_TIMEOUT", "30"))
 
-# x402 pay-per-attest gate — INERT by default. See x402_gate.py for activation
-# steps; arming it WITHOUT the [svm] extra installed crash-loops at boot.
-X402_ENABLED   = _env("X402_ENABLED", "0") == "1"
+# ── Pay-per-attest gate (payment_gate.py) ────────────────────────────────────
+# The agent pays 2¢ USDC on Solana (memo = the payment intent the 402 returns),
+# then retries mint_attest with payment_tx=<sig>; the gate confirms the transfer
+# on-chain before the attestation runs. Plain JSON-RPC over httpx — NO solders /
+# x402[svm] extra, so it can't crash-loop at boot the way the facilitator gate did.
+#
+# DEFAULT ON (X402_ENABLED=true), but fail-safe: the gate stays inert unless
+# PAYMENT_RECIPIENT resolves to a wallet, so a misconfigured deploy serves attest
+# for free rather than rejecting every call. Set X402_ENABLED=false to disable.
+def _flag(name: str, default: bool) -> bool:
+    return _env(name, "true" if default else "false").strip().lower() in ("1", "true", "yes", "on")
+
+X402_ENABLED   = _flag("X402_ENABLED", True)
+
+# base58 pay-to address for the legacy facilitator gate; also the default
+# operations wallet the new gate expects to receive payment. Railway overrides it.
+SOLANA_WALLET  = _env("SOLANA_WALLET", "nFvAMGrVaArW7aozYe2yNRCvC4AmCAwLkQ9pyCQna1s")
+
+ATTEST_PRICE_USDC      = float(_env("ATTEST_PRICE_USDC", "0.02"))
+PAYMENT_RECIPIENT      = _env("PAYMENT_RECIPIENT", SOLANA_WALLET).strip()
+PAYMENT_VERIFY_RPC     = _env("PAYMENT_VERIFY_RPC", "https://api.mainnet-beta.solana.com").rstrip("/")
+# USDC on Solana mainnet (6 decimals). Override only for a different stable/network.
+PAYMENT_USDC_MINT      = _env("PAYMENT_USDC_MINT", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v").strip()
+PAYMENT_EXPIRY_SECONDS = int(_env("PAYMENT_EXPIRY_SECONDS", "300"))
+PAYMENT_CREDIT_TTL_SECONDS = int(_env("PAYMENT_CREDIT_TTL_SECONDS", "86400"))
+
+# Legacy facilitator gate (x402_gate.py) — kept for reference, no longer wired.
 X402_PRICE_USDC = _env("X402_PRICE_USDC", "0.02")
 CDP_API_KEY    = _env("CDP_API_KEY")
-SOLANA_WALLET  = _env("SOLANA_WALLET", "nFvAMGrVaArW7aozYe2yNRCvC4AmCAwLkQ9pyCQna1s")
 
 # Public SSE endpoint, used in discovery payloads. Railway maps the service
 # domain here; mint.foundrynet.io is the eventual vanity host.

@@ -12,7 +12,8 @@ forge_client), never raising across the MCP frame. When SUPABASE_SERVICE_KEY is
 unset, `configured()` is False and callers degrade to identity-only behavior.
 
 Tables owned here:        mint_actors, mint_ratings, mint_recommendations,
-                          mint_trust_scores
+                          mint_trust_scores, mint_payments (x402 revenue ledger +
+                          used-tx store), mint_attest_credits (retry credits)
 Forge tables read here:   forge_trigger_executions (attestation events),
                           forge_agent_machines (key→owned mint_ids)
 """
@@ -204,6 +205,54 @@ async def attestation_work_types(mint_id: str) -> dict:
         wt = ((r.get("payload") or {}).get("work_type")) or "custom"
         out[wt] = out.get(wt, 0) + 1
     return out
+
+
+# ── mint_payments (x402 revenue ledger + used-tx / double-spend store) ────────
+# Every verified attestation payment lands here. `tx_signature` is UNIQUE, so the
+# insert itself IS the double-spend guard: a replayed signature 409s. The same row
+# is the revenue ledger (timestamp, amount, payer wallet, intent/attestation_id).
+
+async def insert_payment(row: dict) -> dict:
+    """Record a verified payment. Relies on a UNIQUE constraint on tx_signature;
+    a duplicate signature returns an error whose detail carries the 409/conflict."""
+    return await _write("POST", "mint_payments", row, prefer="return=representation")
+
+
+async def payment_tx_used(tx_signature: str) -> bool:
+    rows = await _select("mint_payments",
+                         {"tx_signature": f"eq.{tx_signature}", "select": "id", "limit": "1"})
+    return bool(rows)
+
+
+async def finalize_payment(tx_signature: str, fields: dict) -> dict:
+    """Patch a payment row after the attestation resolves (status + attestation_id)."""
+    return await _write("PATCH", "mint_payments", fields,
+                        params={"tx_signature": f"eq.{tx_signature}"})
+
+
+# ── mint_attest_credits (retry credits for paid-but-failed attestations) ──────
+# If the agent paid but the attestation itself failed, a one-shot credit keyed to
+# its mint_id lets it retry once for free. Credits carry an expires_at; consuming
+# one flips consumed=true so it can't be reused.
+
+async def insert_credit(row: dict) -> dict:
+    return await _write("POST", "mint_attest_credits", row, prefer="return=representation")
+
+
+async def active_credit(mint_id: str, now_iso: str) -> Optional[dict]:
+    """The newest unconsumed, unexpired credit for an actor, or None."""
+    rows = await _select("mint_attest_credits", {
+        "mint_id": f"eq.{mint_id}", "consumed": "eq.false",
+        "expires_at": f"gt.{now_iso}",
+        "select": "id,mint_id,expires_at,source_tx", "order": "created_at.desc", "limit": "1"})
+    return rows[0] if rows else None
+
+
+async def consume_credit(credit_id) -> dict:
+    """Atomically claim a credit: only flips it if still unconsumed (the
+    consumed=eq.false filter makes a double-consume a no-op, returning [])."""
+    return await _write("PATCH", "mint_attest_credits", {"consumed": True},
+                        params={"id": f"eq.{credit_id}", "consumed": "eq.false"})
 
 
 # ── discovery ────────────────────────────────────────────────────────────────

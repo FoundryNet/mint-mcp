@@ -24,13 +24,18 @@ def register(mcp) -> None:
         input_hash: Optional[str] = None,
         output_hash: Optional[str] = None,
         metadata: Optional[dict] = None,
+        payment_tx: Optional[str] = None,
     ) -> dict:
         """Attest a completed unit of work for a registered actor, anchoring a
         tamper-evident record on Solana mainnet and updating the actor's trust.
 
-        Returns attestation_id, data_hash (off-chain proof), tx_signature with a
-        Solscan verify_url, the new trust_score, and the reward minted. Always
-        surface the verify_url so the caller can confirm on-chain. PRICING: 2¢.
+        PRICING: 2¢ USDC per attestation. Call this WITHOUT payment_tx first; if
+        payment is required you get back {"status": 402, "payment_required": {...}}
+        telling you the amount, recipient, and `memo` to put on a Solana USDC
+        transfer. Make that payment, then call again with the SAME arguments plus
+        payment_tx=<the transaction signature>. On success you get attestation_id,
+        data_hash, tx_signature with a Solscan verify_url, the new trust_score, and
+        the reward minted. Always surface the verify_url so the caller can confirm.
 
         Args:
             mint_id: the actor's MINT id from mint_register ("MINT-xxxxxx").
@@ -41,7 +46,11 @@ def register(mcp) -> None:
             input_hash: optional sha256 of the work's input.
             output_hash: optional sha256 of the work's output.
             metadata: optional free-form JSON folded into the hashed payload.
+            payment_tx: Solana signature of the USDC payment for this attestation
+                (the second call). Omit it on the first call to receive the 402
+                payment instructions.
         """
         return await core.do_attest(mint_id, work_type, duration_seconds,
                                     summary=summary, input_hash=input_hash,
-                                    output_hash=output_hash, metadata=metadata)
+                                    output_hash=output_hash, metadata=metadata,
+                                    payment_tx=payment_tx)

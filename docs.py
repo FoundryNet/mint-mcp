@@ -69,7 +69,11 @@ ENDPOINTS = [
         "description": ("Anchor a tamper-evident record of a completed unit of work on "
                         "Solana mainnet against the actor's mint_id. Returns a real "
                         "Solscan verify URL. data_hash is a reproducible SHA-256 over the "
-                        "canonical payload — recompute it to verify the record independently."),
+                        "canonical payload — recompute it to verify the record independently. "
+                        "PAYMENT: present an fnet_ Bearer key (Stripe-billed) OR pay 0.02 "
+                        "USDC on Solana. Without either, this returns HTTP 402 with a "
+                        "payment_required body (amount, recipient, memo); send the USDC with "
+                        "that memo, then retry the SAME request with payment_tx=<signature>."),
         "auth": "bearer_or_x402", "cost": "$0.02 per attestation",
         "request": {
             "mint_id": "MINT-abc123",
@@ -78,6 +82,7 @@ ENDPOINTS = [
             "summary": "Reviewed 47 files across the auth module",
             "input_hash": "sha256:…",
             "output_hash": "sha256:…",
+            "payment_tx": "2FdHy2…  (the USDC payment signature, on the retry call)",
         },
         "request_notes": {
             "mint_id": "required — the actor's MINT id",
@@ -87,6 +92,10 @@ ENDPOINTS = [
             "summary": "short description of the work",
             "input_hash": "optional SHA-256 of the input",
             "output_hash": "optional SHA-256 of the output",
+            "payment_tx": "Solana signature of the 0.02 USDC payment (memo = the "
+                          "intent from the 402). Omit on the first call to get the "
+                          "402 payment instructions; required on the paid retry "
+                          "unless you pass an fnet_ Bearer key.",
         },
         "response": {
             "attestation_id": "job_7f2c…",

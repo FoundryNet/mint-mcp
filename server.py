@@ -31,10 +31,9 @@ import config
 import core
 import docs
 import forge_client
+import payment_gate
 import supa
 import tools
-import x402_gate
-from x402_gate import X402Middleware
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,10 +47,18 @@ if not forge_client.configured():
 
 mcp = FastMCP("mint-protocol")
 
-# x402 pay-per-attest gate. Inert unless X402_ENABLED (see x402_gate.py).
-mcp.add_middleware(X402Middleware())
+# Pay-per-attest gating lives in core.do_attest (payment_gate.py) so the SAME
+# policy backs both the MCP tool and the REST route — no middleware to drift, and
+# no x402[svm] import that could crash-loop at boot. (The legacy facilitator
+# middleware in x402_gate.py is superseded and no longer wired.)
+if payment_gate.is_active():
+    logger.info(f"pay-per-attest ARMED: {config.ATTEST_PRICE_USDC} USDC → "
+                f"{config.PAYMENT_RECIPIENT} (rpc={config.PAYMENT_VERIFY_RPC})")
+else:
+    logger.info("pay-per-attest INERT (X402_ENABLED off or PAYMENT_RECIPIENT unset) "
+                "— mint_attest is free")
 
-# Attach the three tools (one module each under tools/).
+# Attach the six tools (one module each under tools/).
 tools.register_all(mcp)
 
 
@@ -72,6 +79,10 @@ async def health(request: Request) -> JSONResponse:
         "trust_store":       "supabase" if supa.configured() else "unconfigured",
         "trust_layer":       "live" if supa.configured() else "identity_only",
         "x402_enabled":      config.X402_ENABLED,
+        "attest_payment":    "armed" if payment_gate.is_active() else "free",
+        "attest_price_usdc": config.ATTEST_PRICE_USDC,
+        "payment_recipient": config.PAYMENT_RECIPIENT,
+        "payment_ledger":    "supabase" if supa.configured() else "in_memory",
         "docs_url":          f"{docs.BASE_URL}/docs",
         "openapi_url":       f"{docs.BASE_URL}/openapi.json",
     })
@@ -112,7 +123,8 @@ async def openapi_spec(request: Request) -> JSONResponse:
 _ERR_STATUS = {"bad_request": 400, "not_configured": 503,
                "not_found": 404, "attest_failed": 502,
                "forbidden": 403, "conflict": 409,
-               "rate_failed": 502, "recommend_failed": 502}
+               "rate_failed": 502, "recommend_failed": 502,
+               "payment_required": 402}
 
 
 def _resp(d: dict) -> JSONResponse:
@@ -155,23 +167,16 @@ async def rest_register(request: Request) -> JSONResponse:
 
 @mcp.custom_route("/v1/attest", methods=["POST"])
 async def rest_attest(request: Request) -> JSONResponse:
-    # Tron model: attest requires EITHER an fnet_ key (Stripe billing) OR an x402
-    # USDC payment — but ONLY when x402 is armed. Inert → authorize() passes open.
-    decision = await x402_gate.authorize(
-        request.headers.get("authorization"), request.headers.get("x-payment"))
-    if not decision["ok"]:
-        return JSONResponse(decision["error"], status_code=402)
-
+    # Pay-per-attest is enforced inside core.do_attest (payment_gate). When the
+    # caller hasn't paid, core returns the {"error":"payment_required", ...} body
+    # and _resp maps it to HTTP 402 — same policy as the MCP surface. An fnet_
+    # Bearer key (Stripe-billed) bypasses payment; otherwise pass payment_tx.
     b = await _json_body(request)
     d = await core.do_attest(
         b.get("mint_id", ""), b.get("work_type", ""), b.get("duration_seconds", 0),
         summary=b.get("summary", ""), input_hash=b.get("input_hash"),
         output_hash=b.get("output_hash"), metadata=b.get("metadata"),
-        api_key=_bearer(request))
-
-    # capture USDC only after a successful attestation (never bill a failed one)
-    if decision.get("method") == "x402" and "error" not in d:
-        await x402_gate.capture(decision.get("payment"))
+        payment_tx=b.get("payment_tx"), api_key=_bearer(request))
     return _resp(d)
 
 

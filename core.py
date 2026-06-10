@@ -19,6 +19,7 @@ from typing import Optional
 import actor_registry
 import config
 import forge_client
+import payment_gate
 import supa
 import trust
 
@@ -197,7 +198,7 @@ _WORK_COMPLEXITY = {"code_review": 1500, "analysis": 1400, "research": 1300,
 async def do_attest(mint_id: str, work_type: str, duration_seconds,
                     summary: str = "", input_hash: Optional[str] = None,
                     output_hash: Optional[str] = None, metadata: Optional[dict] = None,
-                    api_key: Optional[str] = None) -> dict:
+                    payment_tx: Optional[str] = None, api_key: Optional[str] = None) -> dict:
     if not (mint_id or "").startswith("MINT-"):
         return {"error": "bad_request",
                 "detail": f"mint_id must look like 'MINT-xxxxxx', got {mint_id!r}. Register first."}
@@ -215,21 +216,45 @@ async def do_attest(mint_id: str, work_type: str, duration_seconds,
         return {"error": "not_configured",
                 "detail": "No Forge API key available (pass an fnet_ key or set FORGE_API_KEY)."}
 
+    # Pay-per-attest gate (2¢ USDC on Solana). Inert unless armed; an fnet_ key or
+    # a live retry credit bypasses it. A "blocked" decision returns the 402 body
+    # verbatim — the REST layer maps error=payment_required to HTTP 402, and an MCP
+    # client reads the {"status": 402, "payment_required": {…}} dict directly.
+    intent = payment_gate.intent_id(mint_id, wtype, duration_seconds, summary,
+                                    input_hash, output_hash, metadata)
+    decision = await payment_gate.precheck(mint_id, intent, payment_tx, api_key)
+    if decision["gate"] == "blocked":
+        return decision["body"]
+
     complexity = _WORK_COMPLEXITY.get(wtype, 1000)
     receipt = await forge_client.attest(
         mint_id, duration_seconds, complexity=complexity, work_type=wtype,
         input_hash=input_hash, output_hash=output_hash, summary=summary,
         metadata=metadata, api_key=api_key)
     if "error" in receipt:
-        return {"error": "attest_failed", "detail": receipt,
-                "hint": "On-chain anchor failed; nothing was minted. Retry."}
+        # Attestation failed AFTER payment cleared — settle() grants a 24h retry
+        # credit so the agent isn't out the 2¢, then we surface the failure.
+        await payment_gate.settle(decision, mint_id, attestation_id=None, ok=False)
+        out = {"error": "attest_failed", "detail": receipt,
+               "hint": "On-chain anchor failed; nothing was minted. Retry."}
+        if decision["gate"] in ("paid", "credit"):
+            out["payment_status"] = "credited"
+            out["hint"] = ("On-chain anchor failed; nothing was minted. Your payment "
+                           "is preserved as a one-time retry credit (valid 24h) — "
+                           "retry the SAME request with no new payment.")
+        return out
 
     actor_registry.record_work(mint_id, wtype)
+    attestation_id = receipt.get("attestation_id")
+    # Attestation succeeded — finalize the revenue ledger row against the real
+    # attestation_id (no-op for the api_key/open paths).
+    await payment_gate.settle(decision, mint_id, attestation_id=attestation_id, ok=True)
+
     tx = receipt.get("tx_signature")
     verify_url = receipt.get("verify_url") or (
         f"{config.SOLSCAN_TX_BASE}/{tx}" if tx else None)
-    return {
-        "attestation_id": receipt.get("attestation_id"), "mint_id": mint_id,
+    out = {
+        "attestation_id": attestation_id, "mint_id": mint_id,
         "work_type": wtype, "data_hash": receipt.get("data_hash"),
         "tx_signature": tx, "verify_url": verify_url,
         "trust_score": receipt.get("trust_score"), "reward": receipt.get("reward"),
@@ -237,6 +262,12 @@ async def do_attest(mint_id: str, work_type: str, duration_seconds,
         "note": ("On-chain anchor is real; verify_url is a live Solscan link, and "
                  "this attestation permanently accrues to the actor's mint_id."),
     }
+    if decision["gate"] == "paid":
+        out["payment"] = {"method": "x402", "paid_usdc": decision.get("amount_usdc"),
+                          "payment_tx": decision.get("payment_tx"), "payer": decision.get("payer")}
+    elif decision["gate"] == "credit":
+        out["payment"] = {"method": "retry_credit"}
+    return out
 
 
 # ── verify ────────────────────────────────────────────────────────────────────
