@@ -31,6 +31,7 @@ import config
 import core
 import docs
 import forge_client
+import merkle_batch
 import payment_gate
 import supa
 import tools
@@ -58,6 +59,17 @@ else:
     logger.info("pay-per-attest INERT (X402_ENABLED off or PAYMENT_RECIPIENT unset) "
                 "— mint_attest is free")
 
+# Merkle batch anchoring: attestations are recorded off-chain and anchored one
+# merkle root per batch (one cheap Solana memo tx). The background anchorer is
+# started/stopped in the app lifespan (below) so SIGTERM flushes the pending batch.
+if config.MERKLE_ANCHOR_ENABLED:
+    logger.info(f"merkle batch anchoring ON: batch_size={config.BATCH_SIZE}, "
+                f"interval={config.BATCH_INTERVAL_SECONDS}s, "
+                f"signer={'set' if config.ANCHOR_WALLET_KEYPAIR else 'UNSET (inert until configured)'}")
+else:
+    logger.info("merkle batch anchoring OFF (kill switch) — mint_attest settles "
+                "per-attestation on-chain via Forge")
+
 # Attach the six tools (one module each under tools/).
 tools.register_all(mcp)
 
@@ -83,6 +95,10 @@ async def health(request: Request) -> JSONResponse:
         "attest_price_usdc": config.ATTEST_PRICE_USDC,
         "payment_recipient": config.PAYMENT_RECIPIENT,
         "payment_ledger":    "supabase" if supa.configured() else "in_memory",
+        "merkle_anchoring":  ("on" if config.MERKLE_ANCHOR_ENABLED else "off"),
+        "anchor_signer":     ("set" if config.ANCHOR_WALLET_KEYPAIR else "unset"),
+        "batch_size":        config.BATCH_SIZE,
+        "batch_interval_s":  config.BATCH_INTERVAL_SECONDS,
         "docs_url":          f"{docs.BASE_URL}/docs",
         "openapi_url":       f"{docs.BASE_URL}/openapi.json",
     })
@@ -184,7 +200,15 @@ async def rest_attest(request: Request) -> JSONResponse:
 async def rest_verify(request: Request) -> JSONResponse:
     b = await _json_body(request)
     return _resp(await core.do_verify(
-        b.get("mint_id"), b.get("actor_name"), b.get("actor_type")))
+        b.get("mint_id"), b.get("actor_name"), b.get("actor_type"),
+        attestation_hash=b.get("attestation_hash")))
+
+
+@mcp.custom_route("/v1/batch/status", methods=["GET"])
+async def batch_status(request: Request) -> JSONResponse:
+    """Merkle anchoring telemetry: current batch size, time to next anchor, last
+    anchor tx, totals. Open (no auth) — it leaks no secrets."""
+    return JSONResponse(await merkle_batch.status())
 
 
 @mcp.custom_route("/v1/rate", methods=["POST"])
@@ -382,7 +406,14 @@ def build_dual_app():
     async def _dual_lifespan(app):
         async with main_life(app):
             async with sse_life(app):
-                yield
+                # Start the merkle batch anchorer (no-op if MERKLE_ANCHOR_ENABLED is
+                # off). On shutdown — including uvicorn's SIGTERM-driven lifespan
+                # teardown — stop() flushes the pending batch before we exit.
+                await merkle_batch.start()
+                try:
+                    yield
+                finally:
+                    await merkle_batch.stop()
     main_app.router.lifespan_context = _dual_lifespan
     return main_app
 

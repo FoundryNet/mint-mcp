@@ -28,6 +28,16 @@ Optional:
   PAYMENT_EXPIRY_SECONDS  Payment freshness + quote window, default 300 (5 min)
   PAYMENT_CREDIT_TTL_SECONDS  Retry-credit lifetime after a paid-but-failed
                     attest, default 86400 (24h)
+  MERKLE_ANCHOR_ENABLED  "true" (default) batches attestations and anchors one
+                    merkle root per batch on Solana; "false" is the kill switch
+                    back to per-attestation on-chain settlement via Forge.
+  BATCH_SIZE        attestations per batch before an early anchor, default 50
+  BATCH_INTERVAL_SECONDS  max seconds an attestation waits before anchoring,
+                    default 300 (5 min)
+  ANCHOR_WALLET_KEYPAIR  signer for anchor txs (base58 secret / JSON int array /
+                    path to such a file). Only pays the per-tx fee.
+  ANCHOR_RPC        Solana RPC for blockhash + sendTransaction (default = the
+                    payment-verify RPC)
 
 Legacy (the superseded x402-facilitator gate in x402_gate.py — no longer wired):
   X402_PRICE_USDC, CDP_API_KEY, SOLANA_WALLET
@@ -80,6 +90,36 @@ PAYMENT_VERIFY_RPC     = _env("PAYMENT_VERIFY_RPC", "https://api.mainnet-beta.so
 PAYMENT_USDC_MINT      = _env("PAYMENT_USDC_MINT", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v").strip()
 PAYMENT_EXPIRY_SECONDS = int(_env("PAYMENT_EXPIRY_SECONDS", "300"))
 PAYMENT_CREDIT_TTL_SECONDS = int(_env("PAYMENT_CREDIT_TTL_SECONDS", "86400"))
+
+# ── Merkle batch anchoring (merkle_batch.py) ─────────────────────────────────
+# Instead of one on-chain settlement per attestation (~0.002 SOL of rent each),
+# attestations are recorded in Supabase (status "attested"), batched, and a single
+# Solana transaction anchors the merkle ROOT of the whole batch (SPL-memo on a
+# fee-only tx ⇒ ~0.000005 SOL regardless of batch size). Each attestation keeps
+# its merkle proof, so inclusion under the on-chain root is independently
+# verifiable without trusting FoundryNet.
+#
+# DEFAULT ON. The kill switch MERKLE_ANCHOR_ENABLED=false reverts mint_attest to
+# the old per-attestation on-chain flow (Forge /v1/attest — expensive but exact).
+# Like the payment gate, the anchorer is fail-safe: if no signer wallet is
+# configured, attestations are still recorded + paid (status "attested") and drain
+# into a batch as soon as a wallet IS configured — nothing is lost.
+MERKLE_ANCHOR_ENABLED   = _flag("MERKLE_ANCHOR_ENABLED", True)
+BATCH_SIZE              = int(_env("BATCH_SIZE", "50"))            # count trigger
+BATCH_INTERVAL_SECONDS  = int(_env("BATCH_INTERVAL_SECONDS", "300"))  # time trigger (5 min)
+# Upper bound on attestations folded into a single anchor tx (keeps proof depth +
+# the one PATCH sweep bounded when draining a large backlog); the loop re-fires
+# until the backlog is empty.
+ANCHOR_MAX_BATCH        = int(_env("ANCHOR_MAX_BATCH", "1000"))
+# The wallet that signs anchor txs. Accepts a base58 64-byte secret key, a JSON
+# array of 64 ints (solana-keygen format), OR a filesystem path to such a JSON
+# file. It only pays the per-tx fee (~5000 lamports) — keep it minimally funded.
+ANCHOR_WALLET_KEYPAIR   = _env("ANCHOR_WALLET_KEYPAIR")
+# RPC used to fetch a blockhash and submit the anchor tx. Defaults to the same
+# endpoint the payment gate reads with.
+ANCHOR_RPC              = _env("ANCHOR_RPC", PAYMENT_VERIFY_RPC).rstrip("/")
+# SPL Memo program (v2) — the merkle root is written as a memo on the anchor tx.
+MEMO_PROGRAM_ID         = _env("MEMO_PROGRAM_ID", "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
 
 # Legacy facilitator gate (x402_gate.py) — kept for reference, no longer wired.
 X402_PRICE_USDC = _env("X402_PRICE_USDC", "0.02")

@@ -13,7 +13,9 @@ unset, `configured()` is False and callers degrade to identity-only behavior.
 
 Tables owned here:        mint_actors, mint_ratings, mint_recommendations,
                           mint_trust_scores, mint_payments (x402 revenue ledger +
-                          used-tx store), mint_attest_credits (retry credits)
+                          used-tx store), mint_attest_credits (retry credits),
+                          mint_attestations (the primary attestation store —
+                          merkle batch anchoring), mint_anchor_batches (anchor ledger)
 Forge tables read here:   forge_trigger_executions (attestation events),
                           forge_agent_machines (key→owned mint_ids)
 """
@@ -253,6 +255,93 @@ async def consume_credit(credit_id) -> dict:
     consumed=eq.false filter makes a double-consume a no-op, returning [])."""
     return await _write("PATCH", "mint_attest_credits", {"consumed": True},
                         params={"id": f"eq.{credit_id}", "consumed": "eq.false"})
+
+
+# ── mint_attestations (primary attestation store — merkle batch anchoring) ────
+# One row per attested unit of work. Inserted as status 'attested' the moment the
+# payment clears; flipped to 'anchored' (with proof + root + anchor_tx) when the
+# batch anchorer writes the batch's merkle root on-chain. attestation_hash is the
+# merkle leaf AND the public verify handle (UNIQUE).
+
+async def insert_attestation(row: dict) -> dict:
+    return await _write("POST", "mint_attestations", row, prefer="return=representation")
+
+
+async def get_attestation_by_hash(attestation_hash: str) -> Optional[dict]:
+    rows = await _select("mint_attestations",
+                         {"attestation_hash": f"eq.{attestation_hash}", "select": "*", "limit": "1"})
+    return rows[0] if rows else None
+
+
+async def attestations_for_mint(mint_id: str, limit: int = 20) -> list:
+    return await _select("mint_attestations", {
+        "mint_id": f"eq.{mint_id}", "select": "*",
+        "order": "created_at.desc", "limit": str(limit)})
+
+
+async def list_attested(limit: int = 1000) -> list:
+    """Unanchored attestations, oldest first — what the next anchor batch drains."""
+    return await _select("mint_attestations", {
+        "status": "eq.attested", "select": "*",
+        "order": "created_at.asc", "limit": str(limit)})
+
+
+async def mark_attestation_anchored(att_id: str, fields: dict) -> dict:
+    """Flip ONE attestation to 'anchored' with its proof/root/anchor_tx. The
+    status=eq.attested filter makes the PATCH idempotent (a row already anchored by
+    a concurrent pass is left untouched and returns [])."""
+    return await _write("PATCH", "mint_attestations", {"status": "anchored", **fields},
+                        params={"id": f"eq.{att_id}", "status": "eq.attested"})
+
+
+async def attested_count() -> int:
+    return await _count("mint_attestations", {"status": "eq.attested"})
+
+
+async def anchored_count() -> int:
+    return await _count("mint_attestations", {"status": "eq.anchored"})
+
+
+# trust union: these mirror the forge_trigger_executions readers above so trust.py
+# counts attestations from BOTH stores (the two are disjoint — a given attestation
+# lives in exactly one — so summing is exact, never double-counts).
+
+async def mint_attestation_count(mint_id: str) -> int:
+    return await _count("mint_attestations", {"mint_id": f"eq.{mint_id}"})
+
+
+async def mint_attestation_last_active(mint_id: str) -> Optional[str]:
+    rows = await _select("mint_attestations", {
+        "mint_id": f"eq.{mint_id}", "select": "created_at",
+        "order": "created_at.desc", "limit": "1"})
+    return rows[0].get("created_at") if rows else None
+
+
+async def mint_attestation_work_types(mint_id: str) -> dict:
+    rows = await _select("mint_attestations", {
+        "mint_id": f"eq.{mint_id}", "select": "work_type",
+        "order": "created_at.desc", "limit": str(_WORKTYPE_SAMPLE)})
+    out: dict = {}
+    for r in rows:
+        wt = r.get("work_type") or "custom"
+        out[wt] = out.get(wt, 0) + 1
+    return out
+
+
+# ── mint_anchor_batches (one row per on-chain anchor tx) ──────────────────────
+
+async def insert_anchor_batch(row: dict) -> dict:
+    return await _write("POST", "mint_anchor_batches", row, prefer="return=representation")
+
+
+async def last_anchor_batch() -> Optional[dict]:
+    rows = await _select("mint_anchor_batches",
+                         {"select": "*", "order": "anchored_at.desc", "limit": "1"})
+    return rows[0] if rows else None
+
+
+async def anchor_batch_count() -> int:
+    return await _count("mint_anchor_batches", {})
 
 
 # ── discovery ────────────────────────────────────────────────────────────────

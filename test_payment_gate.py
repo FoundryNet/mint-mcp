@@ -31,6 +31,10 @@ config.PAYMENT_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 config.ATTEST_PRICE_USDC = 0.02
 config.PAYMENT_EXPIRY_SECONDS = 300
 config.FORGE_API_KEY = "fnet_service_test"
+# This suite exercises the GATE against the per-attestation Forge path (FakeForge),
+# so pin the kill switch off. Merkle batch anchoring has its own suite
+# (test_merkle_batch.py), which also drives mint_attest through the gate.
+config.MERKLE_ANCHOR_ENABLED = False
 
 PASS, FAIL = "✅ PASS", "❌ FAIL"
 _results = []

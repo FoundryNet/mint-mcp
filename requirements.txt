@@ -1,5 +1,11 @@
 fastmcp>=2.0
 httpx>=0.27
+# Merkle batch anchoring (merkle_batch.py) signs ONE Solana memo tx per batch.
+# solders = pure Rust wheel for keypair + tx building; base58 parses secret keys.
+# Unlike the old x402[svm] facilitator extra, importing solders does NOT crash-loop
+# at boot — and merkle_batch imports it lazily + fail-safe anyway.
+solders>=0.21
+base58>=2.1
 # x402 pay-per-attest is INERT by default. To ARM it, uncomment the line below
 # (the [svm] extra pulls solders; WITHOUT it the container crash-loops at boot)
 # and follow the staging-first steps in x402_gate.py.

@@ -33,9 +33,16 @@ def register(mcp) -> None:
         payment is required you get back {"status": 402, "payment_required": {...}}
         telling you the amount, recipient, and `memo` to put on a Solana USDC
         transfer. Make that payment, then call again with the SAME arguments plus
-        payment_tx=<the transaction signature>. On success you get attestation_id,
-        data_hash, tx_signature with a Solscan verify_url, the new trust_score, and
-        the reward minted. Always surface the verify_url so the caller can confirm.
+        payment_tx=<the transaction signature>.
+
+        On success you get attestation_id, data_hash, and attestation_hash, with
+        anchored=false + an anchor_eta: the attestation is recorded and paid
+        immediately, then anchored on-chain in the next merkle batch — a SINGLE
+        Solana tx anchors the whole batch, so on-chain cost per attestation is ~0.
+        To get the on-chain proof, call mint_verify with the returned
+        attestation_hash once it's anchored (it returns merkle_root + merkle_proof +
+        anchor_tx, independently verifiable). Surface the attestation_hash so the
+        work can be verified later.
 
         Args:
             mint_id: the actor's MINT id from mint_register ("MINT-xxxxxx").

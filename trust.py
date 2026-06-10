@@ -125,7 +125,11 @@ async def recompute(mint_id: str) -> dict:
     mint_trust_scores, and return the cached row. Best-effort: a Supabase blip
     logs and returns a neutral stub rather than raising."""
     try:
-        n_attest = await supa.attestation_count(mint_id)
+        # Attestations live in two disjoint stores: Forge's forge_trigger_executions
+        # (the per-attestation on-chain path / kill switch) and mint_attestations
+        # (the merkle-batch path, now the primary store). An attestation is in
+        # exactly one, so summing the counts is exact and never double-counts.
+        n_attest = await supa.attestation_count(mint_id) + await supa.mint_attestation_count(mint_id)
         ratings = await supa.ratings_for(mint_id)
         scores = [int(r["score"]) for r in ratings
                   if isinstance(r.get("score"), (int, float))]
@@ -138,12 +142,15 @@ async def recompute(mint_id: str) -> dict:
                       if isinstance(r.get("score"), (int, float))]
         n_recs_given = await supa.count_recommendations_given(mint_id)
 
-        last_active = await supa.attestation_last_active(mint_id)
+        last_active = _max_iso(await supa.attestation_last_active(mint_id),
+                               await supa.mint_attestation_last_active(mint_id))
         if ratings:
             last_active = _max_iso(last_active, ratings[0].get("created_at"))
 
         score = compute(n_attest, scores, n_recs, last_active, rec_scores)
         work_types = await supa.attestation_work_types(mint_id)
+        for wt, c in (await supa.mint_attestation_work_types(mint_id)).items():
+            work_types[wt] = work_types.get(wt, 0) + c
 
         fields = {
             "trust_score": score,

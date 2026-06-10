@@ -19,6 +19,7 @@ from typing import Optional
 import actor_registry
 import config
 import forge_client
+import merkle_batch
 import payment_gate
 import supa
 import trust
@@ -226,6 +227,15 @@ async def do_attest(mint_id: str, work_type: str, duration_seconds,
     if decision["gate"] == "blocked":
         return decision["body"]
 
+    # NEW — merkle batch flow (default): record the attestation off-chain and queue
+    # it for batch anchoring, returning immediately. ONE on-chain tx anchors the
+    # merkle root of a whole batch (merkle_batch.py), replacing the per-attestation
+    # recordJob/settleJob/updateTrust that cost ~0.002 SOL each. The kill switch
+    # MERKLE_ANCHOR_ENABLED=false drops to the per-attestation Forge path below.
+    if config.MERKLE_ANCHOR_ENABLED:
+        return await _attest_batched(mint_id, wtype, duration_seconds, summary,
+                                     input_hash, output_hash, metadata, decision)
+
     complexity = _WORK_COMPLEXITY.get(wtype, 1000)
     receipt = await forge_client.attest(
         mint_id, duration_seconds, complexity=complexity, work_type=wtype,
@@ -270,6 +280,64 @@ async def do_attest(mint_id: str, work_type: str, duration_seconds,
     return out
 
 
+async def _attest_batched(mint_id: str, wtype: str, duration_seconds: int,
+                          summary: str, input_hash: Optional[str],
+                          output_hash: Optional[str], metadata: Optional[dict],
+                          decision: dict) -> dict:
+    """Record the attestation off-chain (status 'attested') and queue it for the
+    next merkle batch anchor, returning immediately. No per-attestation on-chain
+    settlement — anchoring is one tx per batch, done asynchronously."""
+    rec = await merkle_batch.record_attestation(
+        mint_id=mint_id, work_type=wtype, duration_seconds=duration_seconds,
+        summary=summary, input_hash=input_hash, output_hash=output_hash,
+        metadata=metadata, payment_tx=decision.get("payment_tx"))
+    if "error" in rec:
+        # Recording failed AFTER payment cleared — make the agent whole with a
+        # one-shot 24h retry credit, exactly like the old on-chain-failure path.
+        await payment_gate.settle(decision, mint_id, attestation_id=None, ok=False)
+        out = {"error": "attest_failed", "detail": rec.get("detail"),
+               "hint": "Could not record the attestation; nothing accrued. Retry."}
+        if decision["gate"] in ("paid", "credit"):
+            out["payment_status"] = "credited"
+            out["hint"] = ("Could not record the attestation; your payment is preserved "
+                           "as a one-time retry credit (valid 24h) — retry the SAME "
+                           "request with no new payment.")
+        return out
+
+    attestation_id = rec["attestation_id"]
+    actor_registry.record_work(mint_id, wtype)
+    # The attestation IS recorded and valid; anchoring is a later durability step
+    # that never re-charges the agent. So payment settles successfully now.
+    await payment_gate.settle(decision, mint_id, attestation_id=attestation_id, ok=True)
+
+    # Reflect the new attestation in the actor's trust score (best-effort; the
+    # trust layer counts mint_attestations alongside Forge history).
+    trust_score = None
+    if supa.configured():
+        try:
+            trust_score = (await trust.recompute(mint_id)).get("trust_score")
+        except Exception:
+            trust_score = None
+
+    out = {
+        "attestation_id": attestation_id, "mint_id": mint_id, "work_type": wtype,
+        "data_hash": rec["data_hash"], "attestation_hash": rec["attestation_hash"],
+        "status": "attested", "anchored": False, "pending_anchor": True,
+        "anchor_eta": merkle_batch.next_anchor_eta(),
+        "trust_score": trust_score,
+        "note": ("Attestation recorded and paid. It will be anchored on-chain in the "
+                 "next merkle batch — ONE Solana tx covers the entire batch, so "
+                 "anchoring cost per attestation is ~0. Call mint_verify with this "
+                 "attestation_hash to retrieve the on-chain merkle proof once anchored."),
+    }
+    if decision["gate"] == "paid":
+        out["payment"] = {"method": "x402", "paid_usdc": decision.get("amount_usdc"),
+                          "payment_tx": decision.get("payment_tx"), "payer": decision.get("payer")}
+    elif decision["gate"] == "credit":
+        out["payment"] = {"method": "retry_credit"}
+    return out
+
+
 # ── verify ────────────────────────────────────────────────────────────────────
 _PENDING_NOTE = (
     "Trust score + on-chain attestation history are served by Forge's trust-read "
@@ -277,8 +345,53 @@ _PENDING_NOTE = (
     "on-chain and will surface here once the read endpoint is wired.")
 
 
+async def _verify_attestation(attestation_hash: str) -> dict:
+    """Verify ONE attestation by its hash: where it sits in the anchoring pipeline
+    and (once anchored) the merkle proof that lets anyone confirm its inclusion
+    under the on-chain root without trusting FoundryNet."""
+    row = await merkle_batch.get_attestation(attestation_hash)
+    if not row:
+        return {"error": "not_found",
+                "detail": f"No attestation with attestation_hash={attestation_hash!r} "
+                          "is known on this instance.", "verifiable": True}
+    base = {
+        "attestation_id": row.get("id"), "mint_id": row.get("mint_id"),
+        "work_type": row.get("work_type"), "data_hash": row.get("data_hash"),
+        "attestation_hash": row.get("attestation_hash"),
+        "duration_seconds": row.get("duration_seconds"), "summary": row.get("summary"),
+        "payment_tx": row.get("payment_tx"), "created_at": row.get("created_at"),
+    }
+    if row.get("status") == "anchored":
+        root, proof, tx = row.get("merkle_root"), row.get("merkle_proof") or [], row.get("anchor_tx")
+        return {
+            **base, "status": "anchored", "anchored": True,
+            "merkle_root": root, "merkle_proof": proof, "anchor_tx": tx,
+            "batch_id": row.get("batch_id"), "anchored_at": row.get("anchored_at"),
+            "verify_url": f"{config.SOLSCAN_TX_BASE}/{tx}" if tx else None,
+            "proof_valid": merkle_batch.verify_proof(row.get("attestation_hash"), proof, root),
+            "verification": "merkle-inclusion", "verifiable": True,
+            "note": ("Independently verifiable: fold merkle_proof into "
+                     "sha256(0x00 || attestation_hash) and confirm the result equals "
+                     "merkle_root, which is written in the SPL-memo of anchor_tx on "
+                     "Solana. No trust in FoundryNet required."),
+        }
+    return {
+        **base, "status": "attested", "anchored": False, "pending_anchor": True,
+        "anchor_eta": merkle_batch.next_anchor_eta(),
+        "verification": "recorded", "verifiable": True,
+        "note": ("Recorded and paid for, not yet anchored on-chain. It will be "
+                 "included in the next merkle batch (one tx anchors the whole batch). "
+                 "Re-verify with this attestation_hash to get the proof once anchored."),
+    }
+
+
 async def do_verify(mint_id: Optional[str] = None, actor_name: Optional[str] = None,
-                    actor_type: Optional[str] = None) -> dict:
+                    actor_type: Optional[str] = None,
+                    attestation_hash: Optional[str] = None) -> dict:
+    # Attestation-level verification: prove a specific unit of work is anchored.
+    if attestation_hash:
+        return await _verify_attestation(attestation_hash)
+
     local: Optional[dict] = None
     if mint_id:
         local = actor_registry.lookup(mint_id)
@@ -298,10 +411,26 @@ async def do_verify(mint_id: Optional[str] = None, actor_name: Optional[str] = N
                 "detail": f"mint_id must look like 'MINT-xxxxxx', got {mint_id!r}"}
 
     # Trust layer live: serve the real profile (trust score, ratings,
-    # recommendations, work-type breakdown) from Supabase. Falls back to the
-    # identity-only "pending" shape only if the trust store isn't configured.
+    # recommendations, work-type breakdown) from Supabase, enriched with the
+    # actor's recent attestations and their on-chain anchor status. Falls back to
+    # the identity-only "pending" shape only if the trust store isn't configured.
     if supa.configured():
-        return await trust.profile(mint_id, local)
+        prof = await trust.profile(mint_id, local)
+        try:
+            atts = await merkle_batch.attestations_for_mint(mint_id, limit=10)
+            if atts:
+                prof["recent_attestations"] = [
+                    {"attestation_hash": a.get("attestation_hash"),
+                     "work_type": a.get("work_type"), "status": a.get("status"),
+                     "anchored": a.get("status") == "anchored",
+                     "anchor_tx": a.get("anchor_tx"), "merkle_root": a.get("merkle_root"),
+                     "at": a.get("created_at")}
+                    for a in atts]
+                prof["unanchored_attestations"] = sum(
+                    1 for a in atts if a.get("status") != "anchored")
+        except Exception:
+            pass
+        return prof
 
     return {
         "mint_id": mint_id, "registered": local is not None,
