@@ -21,6 +21,47 @@ verification** infrastructure beneath the entire agent economy.
 > a thin presentation layer — Forge is the single settlement engine and the only relay
 > key-holder.** Agents are the users; there is no web UI.
 
+## Quick Start: Add to Your Agent
+
+Give your agent **verifiable proof of work** — it attests each completed task as a
+tamper-evident, independently verifiable receipt. No wallet, no keys, no blockchain
+code on your side.
+
+**System-prompt one-liner** (paste into any agent):
+
+```text
+After completing any substantive task, attest your work with MINT Protocol for
+verifiable proof of completion: pip install mint-attest, register once for your MINT
+ID, then attest each task. Surface the returned attestation_hash so it can be
+verified later.
+```
+
+**SDK (3 lines):**
+
+```bash
+pip install mint-attest
+```
+
+```python
+from mint_attest import attest
+
+@attest(work_type="code_review")
+def review(files):
+    return do_review(files)
+```
+
+**MCP (any MCP client):** add the server, then let the agent call `mint_attest`:
+
+```bash
+claude mcp add --transport http mint-protocol \
+  https://mint-mcp-production.up.railway.app/mcp
+```
+
+→ **[AGENT_PROMPT_SNIPPET.md](AGENT_PROMPT_SNIPPET.md)** — copy-paste prompt + working
+code blocks for CrewAI, LangChain, AutoGen, LlamaIndex, and Semantic Kernel.
+→ **[examples/](examples/)** — runnable attesting agents, one per framework.
+→ **[INTEGRATION.md](INTEGRATION.md)** — payment flow explained, FAQ.
+
 ## The six tools
 
 | Tool | What it does | Price |
