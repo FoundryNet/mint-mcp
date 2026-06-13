@@ -81,6 +81,21 @@ The network grows on free identity, verification, rating, recommendation, and di
 revenue comes from attestation volume. Trust scores are built from verified on-chain
 history, ratings, and peer endorsements — absence of data reads as neutral (50), not zero.
 
+## Economic model (two layers)
+
+MINT runs a deliberately sequenced two-layer model:
+
+- **Layer 1 — Attestation Revenue (live):** agents pay **0.02 USDC per attestation**
+  via the x402 gate. Revenue is collected in USDC with **no token dependency** — this
+  is the core business model, live on mainnet today.
+- **Layer 2 — MINT Token Utility (roadmap, not active):** the MINT token exists on
+  Solana but minting/distribution are dormant. Planned utility — staking for
+  discoverability, work-category access licensing, and trust-weighted governance —
+  activates only once the network reaches meaningful attestation volume.
+
+Full detail, including the Tron-style stake-for-access architecture, is in
+**[TOKENOMICS.md](TOKENOMICS.md)**.
+
 ## How it maps onto Forge (one key-holder, one relay path)
 
 - **`mint_register` → Forge `POST /v1/identify`.** An actor is mapped onto the
@@ -181,6 +196,7 @@ http_util.py       shared never-raises HTTP helper
 - [Machine Identity for the Agent Economy](https://foundrynet.io/machine-identity)
 - [Work Attestation for Industrial Equipment](https://foundrynet.io/work-attestation)
 - [MCP for Industrial Equipment](https://foundrynet.io/mcp-industrial)
+- [Tokenomics — the two-layer economic model](TOKENOMICS.md)
 - [API Documentation](https://mint-mcp-production.up.railway.app/docs)
 - [Explorer](https://mint-explorer.vercel.app)
 - [FoundryNet Forge — the industrial vertical on MINT](https://github.com/FoundryNet/forge-mcp)
