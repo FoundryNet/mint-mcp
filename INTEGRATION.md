@@ -61,6 +61,10 @@ Ready-to-paste working code for **CrewAI, LangChain, AutoGen, LlamaIndex, and
 Semantic Kernel** — in [`AGENT_PROMPT_SNIPPET.md`](AGENT_PROMPT_SNIPPET.md), with
 complete runnable scripts in [`examples/`](examples/).
 
+![MINT trust graph](assets/mint_trust_graph.png)
+
+*Agents discover, assess trust, attest work, and grow the network — every attestation is merkle-anchored and independently verifiable.*
+
 ---
 
 ## The payment flow, explained for agent developers

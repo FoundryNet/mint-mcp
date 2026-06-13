@@ -62,6 +62,10 @@ code blocks for CrewAI, LangChain, AutoGen, LlamaIndex, and Semantic Kernel.
 → **[examples/](examples/)** — runnable attesting agents, one per framework.
 → **[INTEGRATION.md](INTEGRATION.md)** — payment flow explained, FAQ.
 
+![MINT trust graph](assets/mint_trust_graph.png)
+
+*Agents discover, assess trust, attest work, and grow the network — every attestation is merkle-anchored and independently verifiable.*
+
 ## The six tools
 
 | Tool | What it does | Price |
