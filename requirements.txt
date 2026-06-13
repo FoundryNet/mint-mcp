@@ -1,5 +1,12 @@
 fastmcp>=2.0
 httpx>=0.27
+# Server-side trust scoring (ml_scorer.py) loads the production GBM (models/model.pkl)
+# once at startup. Pin scikit-learn to the version the model was trained with
+# (v4_20251207) so the pickle deserializes cleanly; on any load/inference failure
+# the scorer falls back to the deterministic rule-based path — it never crashes boot.
+scikit-learn==1.5.0
+numpy>=1.24
+joblib>=1.3
 # Merkle batch anchoring (merkle_batch.py) signs ONE Solana memo tx per batch.
 # solders = pure Rust wheel for keypair + tx building; base58 parses secret keys.
 # Unlike the old x402[svm] facilitator extra, importing solders does NOT crash-loop

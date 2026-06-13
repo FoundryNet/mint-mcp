@@ -159,10 +159,17 @@ async def record_attestation(mint_id: str, work_type: str, duration_seconds: int
                              summary: str = "", input_hash: Optional[str] = None,
                              output_hash: Optional[str] = None,
                              metadata: Optional[dict] = None,
-                             payment_tx: Optional[str] = None) -> dict:
+                             payment_tx: Optional[str] = None,
+                             scores: Optional[dict] = None) -> dict:
     """Persist a new attestation as status 'attested' and queue it for the next
     anchor batch. Returns the identifiers (or {"error": …} if the store write
-    fails — the caller treats that like a failed attestation and refunds)."""
+    fails — the caller treats that like a failed attestation and refunds).
+
+    `scores` (the trust-engine output: ml_confidence, trust_delta, base_score,
+    trust_weighted_score, complexity_claimed, normalized_complexity) is merged into
+    the persisted row AFTER the attestation_hash is computed, so the merkle leaf /
+    hash stays reproducible from the canonical WORK payload alone — independently
+    verifiable without needing the scores."""
     att_id = str(uuid.uuid4())
     created_at = _iso(time.time())
     data_hash = compute_data_hash(mint_id, work_type, duration_seconds, summary,
@@ -173,7 +180,10 @@ async def record_attestation(mint_id: str, work_type: str, duration_seconds: int
         "summary": summary or "", "payment_tx": payment_tx, "created_at": created_at,
     }
     attestation_hash = compute_attestation_hash(record)
-    row = {**record, "attestation_hash": attestation_hash, "status": "attested"}
+    # Scores are NOT part of `record` (the hashed payload) — they're appended to the
+    # stored row only, keeping attestation_hash a pure function of the work content.
+    row = {**record, "attestation_hash": attestation_hash, "status": "attested",
+           **(scores or {})}
 
     if supa.configured():
         res = await supa.insert_attestation(row)

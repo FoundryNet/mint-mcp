@@ -13,16 +13,26 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 import actor_registry
 import config
 import forge_client
 import merkle_batch
+import ml_scorer
 import payment_gate
 import supa
 import trust
+import trust_engine
+
+logger = logging.getLogger("mint.core")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _data_hash(payload: dict) -> str:
@@ -151,6 +161,10 @@ async def _add_to_directory(mint_id: str, actor_type: str, name: str,
                             mcp_endpoint=mcp_endpoint, description=description)
     if await supa.get_trust(mint_id) is None:
         await supa.upsert_trust(mint_id, {"trust_score": 50})
+    # Trust-engine state (ported on-chain MachineState): create the agent's row so
+    # mint_attest can quality-score against it. Idempotent + best-effort — a repeat
+    # register no-ops, and a failure here never fails registration.
+    await supa.create_agent(mint_id)
 
 
 async def _autonomous_register(actor_type: str, name: str,
@@ -217,6 +231,21 @@ async def do_attest(mint_id: str, work_type: str, duration_seconds,
         return {"error": "not_configured",
                 "detail": "No Forge API key available (pass an fnet_ key or set FORGE_API_KEY)."}
 
+    # ── Trust-engine ban gate (ported on-chain MachineBanned) ──
+    # Reject a banned agent UP FRONT with a clear error — before the payment gate,
+    # so a banned agent is never shown a 402 (per the task constraint). Only the
+    # merkle-batch path runs the engine; the legacy per-PDA path keeps its on-chain
+    # ban check. agent_state is reused below to avoid a second fetch.
+    agent_state: Optional[dict] = None
+    if config.MERKLE_ANCHOR_ENABLED and supa.configured():
+        agent_state = await supa.get_or_create_agent(mint_id)
+        if agent_state.get("is_banned"):
+            return {"error": "agent_banned",
+                    "detail": (f"{mint_id} is banned (repeat zero-trust) and can no longer "
+                               "attest. This status is terminal for the identity."),
+                    "mint_id": mint_id, "is_banned": True,
+                    "trust_score": agent_state.get("trust_score", 0)}
+
     # Pay-per-attest gate (2¢ USDC on Solana). Inert unless armed; an fnet_ key or
     # a live retry credit bypasses it. A "blocked" decision returns the 402 body
     # verbatim — the REST layer maps error=payment_required to HTTP 402, and an MCP
@@ -234,7 +263,8 @@ async def do_attest(mint_id: str, work_type: str, duration_seconds,
     # MERKLE_ANCHOR_ENABLED=false drops to the per-attestation Forge path below.
     if config.MERKLE_ANCHOR_ENABLED:
         return await _attest_batched(mint_id, wtype, duration_seconds, summary,
-                                     input_hash, output_hash, metadata, decision)
+                                     input_hash, output_hash, metadata, decision,
+                                     agent_state=agent_state)
 
     complexity = _WORK_COMPLEXITY.get(wtype, 1000)
     receipt = await forge_client.attest(
@@ -283,14 +313,71 @@ async def do_attest(mint_id: str, work_type: str, duration_seconds,
 async def _attest_batched(mint_id: str, wtype: str, duration_seconds: int,
                           summary: str, input_hash: Optional[str],
                           output_hash: Optional[str], metadata: Optional[dict],
-                          decision: dict) -> dict:
-    """Record the attestation off-chain (status 'attested') and queue it for the
-    next merkle batch anchor, returning immediately. No per-attestation on-chain
-    settlement — anchoring is one tx per batch, done asynchronously."""
+                          decision: dict, agent_state: Optional[dict] = None) -> dict:
+    """Quality-score the attestation server-side (ported on-chain trust engine + ML
+    scorer), record it WITH the scores, apply the trust delta to the agent, advance
+    the rolling network window, and queue it for the next merkle batch anchor —
+    returning immediately. No on-chain calls.
+
+    Scoring is deterministic and fail-open: the model is sub-ms, and any scorer
+    error defaults to (ml_confidence=500, trust_delta=0) so an attestation is never
+    blocked on the scorer. State persistence is best-effort — the paid attestation
+    is the durable artifact; a trust-state write blip is logged, not surfaced."""
+    now_iso = _now_iso()
+
+    # ── 1. Score (ported on-chain engine + ML). Pure + deterministic; compute <1ms. ──
+    if agent_state is None:                       # REST callers / merkle-off ban-skip
+        agent_state = await supa.get_or_create_agent(mint_id)
+    network_state = await supa.get_network_state() if supa.configured() else {}
+
+    # complexity is derived from work_type (the SDK doesn't pass one), clamped to the
+    # on-chain protocol range — same convention as the legacy per-PDA path.
+    complexity_claimed = trust_engine.clamp_complexity(_WORK_COMPLEXITY.get(wtype, 1000))
+    job_count = int(agent_state.get("job_count") or 0)
+    # network_avg + warmup use the PRE-update window/job_count, exactly like record_job.
+    net_avg = trust_engine.network_avg_complexity(
+        int(network_state.get("window_complexity_sum") or 0),
+        int(network_state.get("window_jobs") or 0))
+    normalized_complexity = trust_engine.normalize_complexity(complexity_claimed, net_avg)
+    warmup = trust_engine.warmup_multiplier(job_count)
+    base_score = trust_engine.compute_base_score(duration_seconds, normalized_complexity, warmup)
+
+    # Rolling 1h attestation count for the scorer's rate-anomaly feature (one cheap
+    # COUNT; excludes this in-flight attestation, which isn't recorded yet).
+    jobs_last_hour = await supa.jobs_in_last_hour(mint_id) if supa.configured() else 0
+    ml_confidence, trust_delta = ml_scorer.score_attestation(
+        {"work_type": wtype, "duration_seconds": duration_seconds,
+         "complexity_claimed": complexity_claimed, "input_hash": input_hash,
+         "output_hash": output_hash, "summary": summary, "metadata": metadata,
+         "jobs_last_hour_machine": jobs_last_hour},
+        agent_state, network_state)
+
+    delta_res = trust_engine.apply_trust_delta(
+        int(agent_state.get("trust_score") if agent_state.get("trust_score") is not None
+            else trust_engine.TRUST_START),
+        trust_delta,
+        was_on_probation=bool(agent_state.get("on_probation")),
+        probation_count=int(agent_state.get("probation_count") or 0),
+        now_iso=now_iso)
+    new_trust = delta_res["new_trust"]
+    on_probation = delta_res["on_probation"]
+    is_banned = delta_res["is_banned"]
+    trust_weighted = trust_engine.trust_weighted_score(base_score, new_trust, on_probation=on_probation)
+
+    scores = {
+        "ml_confidence": ml_confidence, "trust_delta": trust_delta,
+        "base_score": base_score, "trust_weighted_score": trust_weighted,
+        "complexity_claimed": complexity_claimed,
+        "normalized_complexity": normalized_complexity,
+    }
+
+    # ── 2. Record the attestation WITH its scores. The scores are merged AFTER the
+    # attestation_hash is computed (in record_attestation), so the merkle leaf stays
+    # reproducible from the canonical work payload alone. ──
     rec = await merkle_batch.record_attestation(
         mint_id=mint_id, work_type=wtype, duration_seconds=duration_seconds,
         summary=summary, input_hash=input_hash, output_hash=output_hash,
-        metadata=metadata, payment_tx=decision.get("payment_tx"))
+        metadata=metadata, payment_tx=decision.get("payment_tx"), scores=scores)
     if "error" in rec:
         # Recording failed AFTER payment cleared — make the agent whole with a
         # one-shot 24h retry credit, exactly like the old on-chain-failure path.
@@ -310,26 +397,47 @@ async def _attest_batched(mint_id: str, wtype: str, duration_seconds: int,
     # that never re-charges the agent. So payment settles successfully now.
     await payment_gate.settle(decision, mint_id, attestation_id=attestation_id, ok=True)
 
-    # Reflect the new attestation in the actor's trust score (best-effort; the
-    # trust layer counts mint_attestations alongside Forge history).
-    trust_score = None
+    # ── 3. Persist updated agent + network state (best-effort; never blocks). ──
+    await _persist_engine_state(mint_id, duration_seconds, complexity_claimed,
+                                agent_state, network_state, delta_res, now_iso)
+
+    # ── 4. Keep the social/directory trust fresh (volume axis) — best-effort. This
+    # is the existing reputation score served by verify/discover; the engine
+    # trust_score (new_trust) is separate and is what the receipt reports. ──
     if supa.configured():
         try:
-            trust_score = (await trust.recompute(mint_id)).get("trust_score")
+            await trust.recompute(mint_id)
         except Exception:
-            trust_score = None
+            pass
 
     out = {
         "attestation_id": attestation_id, "mint_id": mint_id, "work_type": wtype,
         "data_hash": rec["data_hash"], "attestation_hash": rec["attestation_hash"],
+        "ml_confidence": ml_confidence,
+        "trust_score": new_trust,
+        "trust_delta": trust_delta,
+        "base_score": base_score,
+        "trust_weighted_score": trust_weighted,
+        "complexity_claimed": complexity_claimed,
+        "normalized_complexity": normalized_complexity,
+        "on_probation": on_probation,
         "status": "attested", "anchored": False, "pending_anchor": True,
         "anchor_eta": merkle_batch.next_anchor_eta(),
-        "trust_score": trust_score,
-        "note": ("Attestation recorded and paid. It will be anchored on-chain in the "
-                 "next merkle batch — ONE Solana tx covers the entire batch, so "
-                 "anchoring cost per attestation is ~0. Call mint_verify with this "
-                 "attestation_hash to retrieve the on-chain merkle proof once anchored."),
+        "scorer": ml_scorer.model_info().get("scorer"),
+        "note": ("Attestation scored, recorded and paid. trust_score + trust_delta come "
+                 "from the server-side trust engine (ported on-chain scoring); "
+                 "ml_confidence is the model's read on whether the work is genuine. It "
+                 "anchors in the next merkle batch — ONE Solana tx covers the batch. "
+                 "Verify with this attestation_hash for the on-chain proof once anchored."),
     }
+    if on_probation:
+        out["note"] = ("Attestation recorded, but the agent's trust is at zero "
+                       "(probation): it accrues no trust-weighted score until trust "
+                       "recovers. " + out["note"])
+    if is_banned:
+        out["is_banned"] = True
+        out["note"] = ("Attestation recorded, but this delta drove trust to zero a "
+                       "second time — the agent is now BANNED and cannot attest again.")
     if decision["gate"] == "paid":
         out["payment"] = {"method": "x402", "paid_usdc": decision.get("amount_usdc"),
                           "payment_tx": decision.get("payment_tx"), "payer": decision.get("payer")}
@@ -338,11 +446,85 @@ async def _attest_batched(mint_id: str, wtype: str, duration_seconds: int,
     return out
 
 
+async def _persist_engine_state(mint_id: str, duration_seconds: int, complexity_claimed: int,
+                                agent_state: dict, network_state: dict, delta_res: dict,
+                                now_iso: str) -> None:
+    """Write the post-attestation agent + network state (mirrors record_job's counter
+    bumps + update_trust's trust write). Best-effort: a Supabase blip is logged, not
+    raised — the attestation is already recorded and paid."""
+    if not supa.configured():
+        return
+    try:
+        agent_update = {
+            "trust_score": delta_res["new_trust"],
+            "job_count": int(agent_state.get("job_count") or 0) + 1,
+            "total_duration": int(agent_state.get("total_duration") or 0) + int(duration_seconds),
+            "complexity_sum": int(agent_state.get("complexity_sum") or 0) + int(complexity_claimed),
+            "is_banned": delta_res["is_banned"],
+            "on_probation": delta_res["on_probation"],
+            "probation_count": delta_res["probation_count"],
+            "last_job_at": now_iso,
+        }
+        pstarted = delta_res["probation_started_at"]
+        if pstarted is None:                 # recovered → clear the stamp
+            agent_update["probation_started_at"] = None
+        elif pstarted != "__keep__":         # entered probation → set the stamp
+            agent_update["probation_started_at"] = pstarted
+        # (pstarted == "__keep__" → leave the column untouched)
+        await supa.update_agent(mint_id, agent_update)
+
+        # Network rolling window (maybe_rotate_window + the post-job increments).
+        if trust_engine.should_rotate_window(network_state.get("window_start")):
+            wj = wd = wc = 0
+            wstart = now_iso
+        else:
+            wj = int(network_state.get("window_jobs") or 0)
+            wd = int(network_state.get("window_duration") or 0)
+            wc = int(network_state.get("window_complexity_sum") or 0)
+            wstart = network_state.get("window_start") or now_iso
+        await supa.update_network_state({
+            "total_jobs": int(network_state.get("total_jobs") or 0) + 1,
+            "total_duration": int(network_state.get("total_duration") or 0) + int(duration_seconds),
+            "total_complexity_sum": int(network_state.get("total_complexity_sum") or 0) + int(complexity_claimed),
+            "window_jobs": wj + 1,
+            "window_duration": wd + int(duration_seconds),
+            "window_complexity_sum": wc + int(complexity_claimed),
+            "window_start": wstart,
+        })
+    except Exception as e:
+        logger.warning(f"trust-engine state persist failed for {mint_id}: {e}")
+
+
 # ── verify ────────────────────────────────────────────────────────────────────
 _PENDING_NOTE = (
     "Trust score + on-chain attestation history are served by Forge's trust-read "
     "endpoint, which is rolling out next. Attestations are already permanent "
     "on-chain and will surface here once the read endpoint is wired.")
+
+
+async def _engine_summary(mint_id: str) -> dict:
+    """The trust-engine view of an actor: its mint_agents state plus quality
+    aggregates (avg trust-weighted score / ML confidence) over its scored
+    attestations. Used by verify/rate/recommend so consumers see QUALITY, not just
+    attestation count. Returns {} when Supabase is unconfigured."""
+    if not supa.configured():
+        return {}
+    agent = await supa.get_agent(mint_id) or {}
+    rows = await supa.attestations_for_mint(mint_id, limit=200)
+    tw = [int(r["trust_weighted_score"]) for r in rows
+          if r.get("trust_weighted_score") is not None]
+    mlc = [int(r["ml_confidence"]) for r in rows if r.get("ml_confidence") is not None]
+    return {
+        "trust_score": agent.get("trust_score"),
+        "job_count": agent.get("job_count"),
+        "on_probation": agent.get("on_probation"),
+        "is_banned": agent.get("is_banned"),
+        "probation_count": agent.get("probation_count"),
+        "last_job_at": agent.get("last_job_at"),
+        "avg_trust_weighted_score": round(sum(tw) / len(tw), 2) if tw else None,
+        "avg_ml_confidence": round(sum(mlc) / len(mlc), 1) if mlc else None,
+        "scored_attestations": len(tw),
+    }
 
 
 async def _verify_attestation(attestation_hash: str) -> dict:
@@ -360,6 +542,12 @@ async def _verify_attestation(attestation_hash: str) -> dict:
         "attestation_hash": row.get("attestation_hash"),
         "duration_seconds": row.get("duration_seconds"), "summary": row.get("summary"),
         "payment_tx": row.get("payment_tx"), "created_at": row.get("created_at"),
+        # trust-engine scores stored with the attestation (None for pre-engine rows)
+        "ml_confidence": row.get("ml_confidence"), "trust_delta": row.get("trust_delta"),
+        "base_score": row.get("base_score"),
+        "trust_weighted_score": row.get("trust_weighted_score"),
+        "complexity_claimed": row.get("complexity_claimed"),
+        "normalized_complexity": row.get("normalized_complexity"),
     }
     if row.get("status") == "anchored":
         root, proof, tx = row.get("merkle_root"), row.get("merkle_proof") or [], row.get("anchor_tx")
@@ -424,10 +612,22 @@ async def do_verify(mint_id: Optional[str] = None, actor_name: Optional[str] = N
                      "work_type": a.get("work_type"), "status": a.get("status"),
                      "anchored": a.get("status") == "anchored",
                      "anchor_tx": a.get("anchor_tx"), "merkle_root": a.get("merkle_root"),
+                     # trust-engine scores recorded with each attestation
+                     "ml_confidence": a.get("ml_confidence"),
+                     "trust_delta": a.get("trust_delta"),
+                     "base_score": a.get("base_score"),
+                     "trust_weighted_score": a.get("trust_weighted_score"),
                      "at": a.get("created_at")}
                     for a in atts]
                 prof["unanchored_attestations"] = sum(
                     1 for a in atts if a.get("status") != "anchored")
+        except Exception:
+            pass
+        # Trust-engine view (ported on-chain MachineState + quality aggregates).
+        # Distinct from the reputation `trust_score` above (ratings/recs-driven):
+        # this is the ML-scored quality trust that starts at 100 and moves per attest.
+        try:
+            prof["trust_engine"] = await _engine_summary(mint_id)
         except Exception:
             pass
         return prof
@@ -502,14 +702,23 @@ async def do_rate(attestation_id: str, rated_mint_id: str, score,
     rating_id = (res.get("data") or [{}])[0].get("id")
 
     updated = await trust.recompute(rated_mint_id)
+    engine = await _engine_summary(rated_mint_id)
     return {
         "rating_id": rating_id, "attestation_id": attestation_id,
         "rated_mint_id": rated_mint_id, "rater_mint_id": rater, "score": score,
         "tags": tags, "data_hash": data_hash,
-        "trust_score_updated": updated.get("trust_score"),
+        "trust_score_updated": updated.get("trust_score"),   # reputation score (ratings/recs)
+        # Trust-engine state of the rated actor (ported on-chain MachineState):
+        "trust_score": engine.get("trust_score"),
+        "job_count": engine.get("job_count"),
+        "on_probation": engine.get("on_probation"),
+        "is_banned": engine.get("is_banned"),
+        "agent_state": engine,
         "status": "recorded",
-        "note": ("Rating recorded and the rated actor's trust score recomputed. "
-                 "data_hash is the reproducible off-chain commitment."),
+        "note": ("Rating recorded and the rated actor's trust recomputed. trust_score + "
+                 "job_count + probation come from the trust engine; trust_score_updated "
+                 "is the ratings/recommendations reputation score. data_hash is the "
+                 "reproducible off-chain commitment."),
     }
 
 
@@ -566,13 +775,22 @@ async def do_recommend(recommended_mint_id: str, context: str, score,
     recommendation_id = (res.get("data") or [{}])[0].get("id")
 
     updated = await trust.recompute(recommended_mint_id)
+    engine = await _engine_summary(recommended_mint_id)
     return {
         "recommendation_id": recommendation_id,
         "recommended_mint_id": recommended_mint_id,
         "recommender_mint_id": recommender, "context": context, "score": score,
         "data_hash": data_hash, "trust_score_updated": updated.get("trust_score"),
+        # Quality context for the endorsed actor — trust-weighted-score average (not
+        # just attestation count), so an endorsement is weighed against real quality.
+        "trust_score": engine.get("trust_score"),
+        "avg_trust_weighted_score": engine.get("avg_trust_weighted_score"),
+        "scored_attestations": engine.get("scored_attestations"),
+        "agent_state": engine,
         "status": "recorded",
-        "note": "Recommendation recorded and the recommended actor's trust recomputed.",
+        "note": ("Recommendation recorded and the recommended actor's trust recomputed. "
+                 "avg_trust_weighted_score reflects the engine's quality-weighted score "
+                 "across its scored attestations, not just attestation volume."),
     }
 
 

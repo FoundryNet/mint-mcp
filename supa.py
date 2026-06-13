@@ -15,7 +15,9 @@ Tables owned here:        mint_actors, mint_ratings, mint_recommendations,
                           mint_trust_scores, mint_payments (x402 revenue ledger +
                           used-tx store), mint_attest_credits (retry credits),
                           mint_attestations (the primary attestation store —
-                          merkle batch anchoring), mint_anchor_batches (anchor ledger)
+                          merkle batch anchoring), mint_anchor_batches (anchor ledger),
+                          mint_agents (per-agent trust state — ported on-chain
+                          MachineState), mint_network_state (rolling window — NetworkState)
 Forge tables read here:   forge_trigger_executions (attestation events),
                           forge_agent_machines (key→owned mint_ids)
 """
@@ -326,6 +328,84 @@ async def mint_attestation_work_types(mint_id: str) -> dict:
         wt = r.get("work_type") or "custom"
         out[wt] = out.get(wt, 0) + 1
     return out
+
+
+# ── mint_agents + mint_network_state (trust engine — ported on-chain scoring) ─
+# mint_agents mirrors the on-chain MachineState (per-agent trust/probation/ban);
+# mint_network_state is the single-row (id=1) rolling weekly window used for
+# complexity normalization. Created in sql/0003_trust_engine.sql. Trust starts at
+# trust_engine.TRUST_START (100) via the column default.
+
+# Defaults returned when Supabase is unconfigured OR a row is missing, so the
+# engine always has something to score against (degrades gracefully, never raises).
+_AGENT_DEFAULTS = {
+    "trust_score": 100, "job_count": 0, "total_duration": 0, "complexity_sum": 0,
+    "is_banned": False, "on_probation": False, "probation_count": 0,
+    "probation_started_at": None, "last_job_at": None,
+}
+_NETWORK_DEFAULTS = {
+    "id": 1, "total_jobs": 0, "total_duration": 0, "total_complexity_sum": 0,
+    "window_jobs": 0, "window_duration": 0, "window_complexity_sum": 0,
+    "window_start": None,
+}
+
+
+async def get_agent(mint_id: str) -> Optional[dict]:
+    rows = await _select("mint_agents", {"mint_id": f"eq.{mint_id}", "select": "*", "limit": "1"})
+    return rows[0] if rows else None
+
+
+async def create_agent(mint_id: str) -> dict:
+    """Insert the agent's trust-state row at registration. Idempotent: a repeat
+    register sends only mint_id, so on-conflict it no-ops (existing trust state
+    preserved); a new row picks up the column defaults (trust_score=100 etc.)."""
+    return await _write("POST", "mint_agents", {"mint_id": mint_id},
+                        prefer="resolution=merge-duplicates,return=representation")
+
+
+async def update_agent(mint_id: str, fields: dict) -> dict:
+    return await _write("PATCH", "mint_agents", fields, params={"mint_id": f"eq.{mint_id}"})
+
+
+async def get_or_create_agent(mint_id: str) -> dict:
+    """The agent's trust state, creating it on first sight. Always returns a dict
+    (falls back to in-memory defaults when Supabase is unconfigured)."""
+    if not configured():
+        return {"mint_id": mint_id, **_AGENT_DEFAULTS}
+    row = await get_agent(mint_id)
+    if row:
+        return row
+    await create_agent(mint_id)
+    return (await get_agent(mint_id)) or {"mint_id": mint_id, **_AGENT_DEFAULTS}
+
+
+async def jobs_in_last_hour(mint_id: str) -> int:
+    """Count this agent's attestations in the trailing hour — the rolling input for
+    the ml_scorer's jobs_last_hour_machine rate-anomaly feature. One cheap COUNT;
+    0 when Supabase is unconfigured. Excludes the in-flight attestation (it isn't
+    recorded until after scoring)."""
+    from datetime import datetime, timedelta, timezone
+    since = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    return await _count("mint_attestations",
+                        {"mint_id": f"eq.{mint_id}", "created_at": f"gt.{since}"})
+
+
+async def get_network_state() -> dict:
+    """The single-row network aggregate (id=1), creating it if absent. Always
+    returns a dict (defaults when unconfigured/missing)."""
+    if not configured():
+        return dict(_NETWORK_DEFAULTS)
+    rows = await _select("mint_network_state", {"id": "eq.1", "select": "*", "limit": "1"})
+    if rows:
+        return rows[0]
+    await _write("POST", "mint_network_state", {"id": 1},
+                 prefer="resolution=merge-duplicates,return=representation")
+    rows = await _select("mint_network_state", {"id": "eq.1", "select": "*", "limit": "1"})
+    return rows[0] if rows else dict(_NETWORK_DEFAULTS)
+
+
+async def update_network_state(fields: dict) -> dict:
+    return await _write("PATCH", "mint_network_state", fields, params={"id": "eq.1"})
 
 
 # ── mint_anchor_batches (one row per on-chain anchor tx) ──────────────────────

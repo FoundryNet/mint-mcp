@@ -32,6 +32,7 @@ import core
 import docs
 import forge_client
 import merkle_batch
+import ml_scorer
 import payment_gate
 import supa
 import tools
@@ -97,6 +98,7 @@ async def health(request: Request) -> JSONResponse:
         "payment_ledger":    "supabase" if supa.configured() else "in_memory",
         "merkle_anchoring":  ("on" if config.MERKLE_ANCHOR_ENABLED else "off"),
         "anchor_signer":     ("set" if config.ANCHOR_WALLET_KEYPAIR else "unset"),
+        "scoring":           ml_scorer.model_info(),
         "batch_size":        config.BATCH_SIZE,
         "batch_interval_s":  config.BATCH_INTERVAL_SECONDS,
         "docs_url":          f"{docs.BASE_URL}/docs",
