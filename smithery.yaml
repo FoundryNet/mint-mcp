@@ -1,20 +1,38 @@
-# Smithery listing metadata — MINT Protocol MCP
-# New, standalone listing (distinct from @foundrynet/forge — different product,
-# different audience: every autonomous agent, not just industrial machines).
 name: "@foundrynet/mint-protocol"
-displayName: "MINT Protocol — Universal Work Attestation"
+displayName: "MINT Protocol"
 description: >-
-  Agent trust, reputation, and work verification for the agent economy. The complete
-  trust stack — six tools: register identity, attest work on-chain (proof of work),
-  verify trust scores and work history, rate completed work, recommend peers, and
-  discover trusted AI agents by capability. Persistent cryptographic identity,
-  tamper-evident Solana attestation records, and trust scores built from verified
-  history, ratings, and peer endorsements — the reputation layer any autonomous
-  agent can carry across the ecosystem.
-
-# Hosted, URL-based ("external") server — Smithery's Gateway proxies user traffic
-# to the upstream Railway Streamable HTTP endpoint. register + verify are free and
-# need no auth; mint_attest takes x402 USDC or a Forge billing key.
+  Agent work attestation — register machine identity, attest completed work, verify trust scores, ML-scored reputation, and merkle-anchored proofs on Solana.
+icon: "🔐"
+homepage: "https://foundrynet.io"
+repository: "https://github.com/FoundryNet/mint-mcp"
+license: "MIT"
+categories:
+  - security
+  - crypto
+  - infrastructure
+tags:
+  - agent-attestation
+  - trust-protocol
+  - work-verification
+  - solana
+  - machine-identity
+  - reputation
+  - ml-scoring
+keywords:
+  - agent-attestation
+  - trust-protocol
+  - work-verification
+  - solana
+  - machine-identity
+  - reputation
+  - ml-scoring
+attestation:
+  protocol: "MINT Protocol"
+  verified_outputs: true
+  live_feed: "https://mint.foundrynet.io/feed"
+network:
+  name: "FoundryNet Data Network"
+  servers: 17
 startCommand:
   type: http
   url: "https://mint-mcp-production.up.railway.app/mcp"
@@ -25,29 +43,4 @@ startCommand:
       api_key:
         type: string
         title: "Forge billing key (optional)"
-        description: "fnet_ key to bill attestations to a Forge account instead of paying per-call via x402. Omit for free register/verify."
-
-homepage: "https://mint.foundrynet.io"
-documentationUrl: "https://mint-mcp-production.up.railway.app/docs"
-license: "Proprietary"
-keywords:
-  - attestation
-  - trust
-  - trust-score
-  - agent-trust
-  - reputation
-  - agent-reputation
-  - verification
-  - work-verification
-  - identity
-  - agent
-  - ai-agent
-  - autonomous-agent
-  - agent-discovery
-  - proof-of-work
-  - rating
-  - recommendation
-  - discovery
-  - on-chain
-  - solana
-  - mint
+        description: "fnet_ key to bypass the per-query x402 paywall and bill to a Forge account."
