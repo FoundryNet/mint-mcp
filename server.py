@@ -86,7 +86,15 @@ async def health(request: Request) -> JSONResponse:
         "service":           "mint-protocol-mcp",
         "transport":         "streamable-http",
         "tools":             ["mint_register", "mint_attest", "mint_verify",
-                              "mint_rate", "mint_recommend", "mint_discover"],
+                              "mint_rate", "mint_recommend", "mint_discover",
+                              "mint_create_cell", "mint_join_cell", "mint_settle_cell",
+                              "mint_create_policy", "mint_settle_policy"],
+        "foundrynet_onchain": {
+            "program_id": config.FOUNDRY_PROGRAM_ID,
+            "cluster":    config.FOUNDRY_CLUSTER,
+            "configured": bool((config.FOUNDRY_CELL_WALLET or "").strip())
+                          and bool(config.FOUNDRY_STAKE_MINT),
+        },
         "forge_api_url":     config.FORGE_API_URL,
         "forge_key_configured":  forge_client.configured(),
         "trust_store":       "supabase" if supa.configured() else "unconfigured",
@@ -213,6 +221,27 @@ async def batch_status(request: Request) -> JSONResponse:
     return JSONResponse(await merkle_batch.status())
 
 
+@mcp.custom_route("/v1/feed", methods=["GET", "OPTIONS"])
+async def feed(request: Request) -> JSONResponse:
+    """Public live attestation feed: the newest attestations across the whole
+    network — originating server/agent, summary, trust score, ML confidence,
+    anchor status, merkle root + Solscan link — plus showcase stats. FREE,
+    CORS-open, short-cached. A public showcase, not a paid tool."""
+    cors = {"Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Cache-Control": "public, max-age=15, s-maxage=15"}
+    if request.method == "OPTIONS":
+        return JSONResponse({}, status_code=204, headers=cors)
+    try:
+        limit = int(request.query_params.get("limit", "50"))
+    except (TypeError, ValueError):
+        limit = 50
+    items = await supa.recent_attestations(limit)
+    stats = await supa.feed_stats()
+    return JSONResponse({"attestations": items, "count": len(items), "stats": stats},
+                        headers=cors)
+
+
 @mcp.custom_route("/v1/rate", methods=["POST"])
 async def rest_rate(request: Request) -> JSONResponse:
     # FREE; the Bearer fnet_ key identifies the rater (bound to an owned actor).
@@ -255,6 +284,8 @@ _AGENT_CARD = {
         "the agent economy."
     ),
     "url": "https://mint.foundrynet.io",
+    "live_feed": "https://mint.foundrynet.io/feed",
+    "feed_api": "https://mint-mcp-production.up.railway.app/v1/feed",
     "capabilities": [
         "agent_identity",
         "work_attestation",
@@ -283,12 +314,27 @@ _AGENT_CARD = {
         {"name": "mint_discover",
          "description": "Trust-ranked search of the actor directory by capability",
          "pricing": "free"},
+        {"name": "mint_create_cell",
+         "description": "Open a stake-backed on-chain work cell (FoundryNet devnet)",
+         "pricing": "network fee"},
+        {"name": "mint_join_cell",
+         "description": "Join a work cell by staking; opens participant + trust accounts",
+         "pricing": "network fee"},
+        {"name": "mint_settle_cell",
+         "description": "Evaluate + settle a work cell; 96/2/2 split, stakes returned, trust updated",
+         "pricing": "network fee"},
+        {"name": "mint_create_policy",
+         "description": "Open a parametric insurance policy with funded coverage escrow",
+         "pricing": "network fee"},
+        {"name": "mint_settle_policy",
+         "description": "Settle a policy: pay beneficiary if triggered, else refund insurer",
+         "pricing": "network fee"},
     ],
     "protocols": {
         "mcp": {
             "endpoint": config.PUBLIC_MCP_URL,
             "transport": "streamable-http",
-            "tools_count": 6,
+            "tools_count": 11,
         },
         "x402": {
             "supported": True,
@@ -385,6 +431,27 @@ async def server_card(request: Request) -> JSONResponse:
         },
         headers={"Cache-Control": "public, max-age=300"},
     )
+
+
+@mcp.custom_route("/.well-known/mcp.json", methods=["GET"])
+async def wellknown_mcp_json(request: Request) -> JSONResponse:
+    """Machine-discovery card (emerging standard) for AI clients/crawlers."""
+    live = await _live_tools()
+    names = [t["name"] for t in live]
+    return JSONResponse({
+        "name": "MINT Protocol — Universal Work Attestation",
+        "description": ("Register, attest, and verify work for any autonomous agent — "
+                        "the reputation layer for the agent economy."),
+        "url": config.PUBLIC_MCP_URL,
+        "transport": ["streamable-http"],
+        "tools": names,
+        "pricing": {"model": "per-query", "free_tier": True,
+                    "paid_tools": ["mint_attest"]},
+        "attestation": {"enabled": True, "protocol": "MINT Protocol",
+                        "feed": "https://mint.foundrynet.io/feed"},
+        "network": {"name": "FoundryNet Data Network", "servers": 17,
+                    "homepage": "https://foundrynet.io"},
+    }, headers={"Cache-Control": "public, max-age=300"})
 
 
 # ── Entrypoint ───────────────────────────────────────────────────────────────

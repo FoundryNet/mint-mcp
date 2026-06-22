@@ -121,6 +121,28 @@ ANCHOR_RPC              = _env("ANCHOR_RPC", PAYMENT_VERIFY_RPC).rstrip("/")
 # SPL Memo program (v2) — the merkle root is written as a memo on the anchor tx.
 MEMO_PROGRAM_ID         = _env("MEMO_PROGRAM_ID", "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
 
+# ── FoundryNet on-chain work cells + parametric insurance (foundrynet.py) ─────
+# Devnet deployment of the foundry_net program (the work_cells + insurance
+# modules). The five mint_*_cell / mint_*_policy tools build and submit REAL
+# transactions against that program, signed by FOUNDRY_CELL_WALLET (which falls
+# back to the merkle ANCHOR_WALLET_KEYPAIR). Like the anchorer + payment gate they
+# are fail-safe: with no signer or no stake mint configured they return
+# status="not_configured" instead of erroring, so a bare deploy never breaks.
+#
+# NOTE: this program id is the DEVNET deployment — it is deliberately NOT the
+# mainnet foundry_net program (4ZvTZ3skfeMF3ZGyABoazPa9tiudw2QSwuVKn45t2AKL).
+FOUNDRY_PROGRAM_ID  = _env("FOUNDRY_PROGRAM_ID", "GPAsjEHRKdoKeHsfgBTcJ6eoNLQ1BMpQ83eV3XHnMKKR")
+FOUNDRY_RPC         = _env("FOUNDRY_RPC", "https://api.devnet.solana.com").rstrip("/")
+FOUNDRY_CLUSTER     = _env("FOUNDRY_CLUSTER", "devnet").strip()
+# Signer for cell/policy txs; defaults to the merkle anchor wallet so a single
+# funded keypair can serve both. Same accepted formats (base58 / JSON array / path).
+FOUNDRY_CELL_WALLET = _env("FOUNDRY_CELL_WALLET", ANCHOR_WALLET_KEYPAIR)
+# SPL mint used for stakes + rewards (cells) and coverage + premium (insurance).
+# On devnet this is a test mint the signer holds a funded associated account of.
+FOUNDRY_STAKE_MINT  = _env("FOUNDRY_STAKE_MINT").strip()
+# Where the 2% protocol fee on cell settlement lands (default = the signer's ATA).
+FOUNDRY_PROTOCOL_TOKEN = _env("FOUNDRY_PROTOCOL_TOKEN").strip()
+
 # Legacy facilitator gate (x402_gate.py) — kept for reference, no longer wired.
 X402_PRICE_USDC = _env("X402_PRICE_USDC", "0.02")
 CDP_API_KEY    = _env("CDP_API_KEY")

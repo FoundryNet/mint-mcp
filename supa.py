@@ -269,6 +269,131 @@ async def insert_attestation(row: dict) -> dict:
     return await _write("POST", "mint_attestations", row, prefer="return=representation")
 
 
+_SOLSCAN = "https://solscan.io/tx/"
+
+
+def _derive_source(name: str, summary: str) -> str:
+    """The specific server/agent behind an attestation. Network attestations
+    share two umbrella actors (foundrynet-data-network, foundrynet-agent-fleet),
+    but the originating server/agent is encoded in the summary, e.g.
+    'content_generator completed: …', 'Daily financial-signals brief: …',
+    'anomaly_alert query result'. Falls back to the actor name."""
+    import re
+    s = (summary or "").strip()
+    m = re.match(r"^([A-Za-z][\w-]+) completed", s)          # fleet agents
+    if m:
+        return m.group(1)
+    m = re.match(r"^Daily ([\w-]+) brief", s)                # data-server daily brief
+    if m:
+        return m.group(1) + "-mcp"
+    m = re.match(r"^([a-z][a-z0-9_]+) query result", s)      # premium tool result
+    if m:
+        return m.group(1)
+    return name
+
+
+async def recent_attestations(limit: int = 50) -> list:
+    """Newest attestations across ALL actors, enriched with the originating
+    server/agent source, the actor's trust score, ML confidence, anchor status,
+    merkle root, and a Solscan link. Powers the public live feed. Read-only."""
+    n = min(max(int(limit or 50), 1), 100)
+    rows = await _select("mint_attestations", {
+        "select": "mint_id,work_type,summary,attestation_hash,status,created_at,"
+                  "anchored_at,merkle_root,anchor_tx,ml_confidence,trust_weighted_score",
+        "order": "created_at.desc", "limit": str(n)})
+    if not rows:
+        return []
+    ids = list({r["mint_id"] for r in rows if r.get("mint_id")})
+    names: dict = {}
+    trust: dict = {}
+    if ids:
+        inlist = "in.(" + ",".join(ids) + ")"
+        for a in await _select("mint_actors",
+                               {"select": "mint_id,name,actor_type", "mint_id": inlist,
+                                "limit": str(len(ids))}):
+            names[a["mint_id"]] = a
+        for t in await _select("mint_trust_scores",
+                               {"select": "mint_id,trust_score", "mint_id": inlist,
+                                "limit": str(len(ids))}):
+            trust[t["mint_id"]] = t.get("trust_score")
+    out = []
+    for r in rows:
+        mid = r.get("mint_id")
+        a = names.get(mid, {})
+        anchored = r.get("status") == "anchored"
+        atx = r.get("anchor_tx")
+        out.append({
+            "mint_id": mid,
+            "name": a.get("name") or mid,
+            "source": _derive_source(a.get("name") or mid, r.get("summary")),
+            "actor_type": a.get("actor_type"),
+            "work_type": r.get("work_type"),
+            "summary": r.get("summary"),
+            "attestation_hash": r.get("attestation_hash"),
+            "merkle_root": r.get("merkle_root"),
+            "anchor_tx": atx,
+            "solscan_url": (_SOLSCAN + atx) if (anchored and atx) else None,
+            "status": r.get("status"),
+            "anchored": anchored,
+            "anchored_at": r.get("anchored_at"),
+            "confidence": r.get("ml_confidence"),
+            "trust_score": trust.get(mid),
+            "trust_weighted_score": r.get("trust_weighted_score"),
+            "created_at": r.get("created_at"),
+        })
+    return out
+
+
+async def feed_stats() -> dict:
+    """Showcase counters for the live-feed stats bar: attestations today, distinct
+    active sources (24h), operational servers (from network_health), avg trust."""
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00")
+    since = datetime.now(timezone.utc).timestamp() - 86400
+    since_iso = datetime.fromtimestamp(since, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+    attest_today = await _count("mint_attestations", {"created_at": f"gte.{today}"})
+
+    # Distinct active sources + avg trust over the last 24h of attestations.
+    recent = await _select("mint_attestations", {
+        "select": "mint_id,summary", "created_at": f"gte.{since_iso}",
+        "order": "created_at.desc", "limit": "500"})
+    sources = set()
+    actor_ids = set()
+    for r in recent:
+        actor_ids.add(r.get("mint_id"))
+        sources.add(_derive_source(r.get("mint_id") or "", r.get("summary")))
+    avg_trust = None
+    if actor_ids:
+        ids = [i for i in actor_ids if i]
+        if ids:
+            inlist = "in.(" + ",".join(ids) + ")"
+            ts = await _select("mint_trust_scores",
+                               {"select": "trust_score", "mint_id": inlist, "limit": "200"})
+            vals = [t["trust_score"] for t in ts if t.get("trust_score") is not None]
+            if vals:
+                avg_trust = round(sum(vals) / len(vals))
+
+    # Operational servers from the network_health table (latest row per endpoint).
+    servers_up = servers_total = None
+    nh = await _select("network_health", {
+        "select": "endpoint,healthy,checked_at", "order": "checked_at.desc", "limit": "300"})
+    if nh:
+        latest: dict = {}
+        for row in nh:
+            latest.setdefault(row["endpoint"], row)
+        servers_total = len(latest)
+        servers_up = sum(1 for v in latest.values() if v.get("healthy"))
+
+    return {
+        "attestations_today": attest_today,
+        "active_sources": len(sources),
+        "servers_up": servers_up,
+        "servers_total": servers_total,
+        "avg_trust": avg_trust,
+    }
+
+
 async def get_attestation_by_hash(attestation_hash: str) -> Optional[dict]:
     rows = await _select("mint_attestations",
                          {"attestation_hash": f"eq.{attestation_hash}", "select": "*", "limit": "1"})

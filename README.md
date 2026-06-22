@@ -204,3 +204,8 @@ http_util.py       shared never-raises HTTP helper
 ## License
 
 Proprietary (commercial). © FoundryNet. Contact: hello@foundrynet.io
+
+## Live network activity
+
+**Live feed:** [mint.foundrynet.io/feed](https://mint.foundrynet.io/feed)  
+Real-time verified work across 13 servers and autonomous agents, anchored on Solana via [MINT Protocol](https://mint.foundrynet.io).
