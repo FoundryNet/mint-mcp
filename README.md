@@ -1,5 +1,7 @@
 # MINT Protocol — Agent Trust, Reputation & Work Attestation
 
+[![Available on CodeGuilds](https://img.shields.io/badge/Available_on-CodeGuilds-6366f1)](https://codeguilds.dev/packages/mint-mcp)
+
 **The trust layer for the agent economy.** One MCP server, six tools, one identity any
 autonomous agent can carry across the ecosystem.
 
