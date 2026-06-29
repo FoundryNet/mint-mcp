@@ -1,0 +1,102 @@
+{
+  "$about": "Portable conformance vectors for the OKF reliability object (okf-reliability-v1). Each vector is {label, expect: valid|invalid, reliability}. A conformant validator MUST accept every `valid` vector and reject every `invalid` one. Language-agnostic: run them against the JSON Schema (ajv, jsonschema, ...) or either reference validator here. Used to confirm independent implementations agree, the same way DF-VERIFY/1 signing vectors do for signatures.",
+  "schema": "https://dynamicfeed.ai/schemas/okf-reliability-v1.json",
+  "credits": "The two version-keyed disputed cases (rule 5, both ends of the dispute ceiling) are from the multi-version-corpus shape contributed by @K4uP on GoogleCloudPlatform/knowledge-catalog#159. Values are fully synthetic.",
+  "vectors": [
+    {
+      "label": "floor: two-field maturity-ladder minimum",
+      "expect": "valid",
+      "reliability": { "confidence": "LOW", "basis": "inferred" }
+    },
+    {
+      "label": "live single-source: signed but not verified, caps at MEDIUM",
+      "expect": "valid",
+      "reliability": { "confidence": "MEDIUM", "basis": "live-source", "score": 0.8, "sources": 1, "verified": false, "vantage": "producer-reported", "freshness": { "state": "fresh" }, "signals": { "signed": true, "corroborated": false, "fresh": true } }
+    },
+    {
+      "label": "corroborated and verified, still producer-reported (corroboration is not independence)",
+      "expect": "valid",
+      "reliability": { "confidence": "HIGH", "basis": "live-source", "score": 0.95, "sources": 3, "verified": true, "vantage": "producer-reported", "signals": { "signed": true, "corroborated": true, "fresh": true } }
+    },
+    {
+      "label": "independently observed reading (vantage = independent)",
+      "expect": "valid",
+      "reliability": { "confidence": "HIGH", "basis": "live-source", "score": 0.92, "sources": 2, "verified": true, "vantage": "independent", "freshness": { "state": "fresh" }, "signals": { "signed": true, "corroborated": true, "fresh": true } }
+    },
+    {
+      "label": "rule5 GOOD: versioned corpus, disputed, prevailing live-source win at the MEDIUM ceiling",
+      "expect": "valid",
+      "reliability": {
+        "confidence": "MEDIUM", "basis": "live-source", "sources": 2, "verified": false,
+        "conflict": {
+          "disputed": true,
+          "positions": [
+            { "statement": "Default session timeout is 30 minutes.", "basis": "live-source", "source": "Observed on an Acme 5.0 instance, 2026-06-29" },
+            { "statement": "Default session timeout is 20 minutes.", "basis": "vendor-doc", "source": "Acme Admin Guide 5.0" }
+          ],
+          "resolution": "live-source prevails under the trust ordering; both positions retained"
+        },
+        "validity": { "keyed_by": "version", "valid_from": "5.0", "valid_until": null },
+        "freshness": { "as_of": "2026-06-29T00:00:00Z", "state": "fresh" },
+        "signals": { "signed": true, "corroborated": false, "fresh": true }
+      }
+    },
+    {
+      "label": "disputed, conservative producer floors to LOW (also valid; the ceiling is MEDIUM, not a floor)",
+      "expect": "valid",
+      "reliability": {
+        "confidence": "LOW", "basis": "live-source", "sources": 2, "verified": false,
+        "conflict": {
+          "disputed": true,
+          "positions": [
+            { "statement": "PM2.5 = 42 ug/m3", "basis": "live-source", "source": "Sensor network A, station 118" },
+            { "statement": "PM2.5 = 11 ug/m3", "basis": "vendor-doc", "source": "Regulatory daily summary, prior-day average" }
+          ],
+          "resolution": "live-source prevails under the trust ordering; both positions retained"
+        },
+        "signals": { "conflict": true }
+      }
+    },
+    {
+      "label": "verified:true with sources<2 (corroboration lie)",
+      "expect": "invalid",
+      "reliability": { "confidence": "HIGH", "basis": "live-source", "verified": true, "sources": 1, "score": 0.9 }
+    },
+    {
+      "label": "HIGH band riding a near-zero score",
+      "expect": "invalid",
+      "reliability": { "confidence": "HIGH", "basis": "live-source", "score": 0.05 }
+    },
+    {
+      "label": "UNVERIFIED but verified:true",
+      "expect": "invalid",
+      "reliability": { "confidence": "UNVERIFIED", "basis": "inferred", "verified": true }
+    },
+    {
+      "label": "disputed conflict missing positions + resolution",
+      "expect": "invalid",
+      "reliability": { "confidence": "LOW", "basis": "live-source", "conflict": { "disputed": true } }
+    },
+    {
+      "label": "rule5 BAD: a disputed reading graded HIGH (dispute caps at MEDIUM)",
+      "expect": "invalid",
+      "reliability": {
+        "confidence": "HIGH", "basis": "live-source", "sources": 2, "verified": false,
+        "conflict": {
+          "disputed": true,
+          "positions": [
+            { "statement": "Default session timeout is 30 minutes.", "basis": "live-source", "source": "Observed on an Acme 5.0 instance" },
+            { "statement": "Default session timeout is 20 minutes.", "basis": "vendor-doc", "source": "Acme Admin Guide 5.0" }
+          ],
+          "resolution": "live-source prevails; both positions retained"
+        },
+        "validity": { "keyed_by": "version", "valid_from": "5.0", "valid_until": null }
+      }
+    },
+    {
+      "label": "unknown confidence band",
+      "expect": "invalid",
+      "reliability": { "confidence": "PRETTY_SURE", "basis": "live-source" }
+    }
+  ]
+}

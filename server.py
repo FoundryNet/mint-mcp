@@ -75,6 +75,21 @@ else:
 tools.register_all(mcp)
 
 
+# ── okf-reliability-v1: emit reliability metadata on every tool result (#2964) ──
+try:
+    from okf_middleware import ReliabilityMiddleware
+    mcp.add_middleware(ReliabilityMiddleware(server_id="mint-protocol"))
+except Exception as _okf_e:  # noqa: BLE001
+    import logging as _okf_log; _okf_log.getLogger(__name__).warning(f"okf middleware not wired: {_okf_e}")
+
+
+@mcp.custom_route("/v1/reliability", methods=["GET"])
+async def _okf_reliability_route(request):
+    from starlette.responses import JSONResponse
+    import okf_endpoint
+    return JSONResponse(okf_endpoint.reliability_payload("mint-protocol"))
+
+
 # ── Health ──────────────────────────────────────────────────────────────────
 
 @mcp.custom_route("/health", methods=["GET"])
