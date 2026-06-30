@@ -1,40 +1,50 @@
 {
   "name": "MINT Protocol",
-  "description": "Universal work attestation for autonomous agents. Register identity, attest completed work, verify trust scores. The reputation layer for the agent economy.",
+  "description": "Universal work attestation for autonomous agents. Register identity, attest completed work (free), verify trust scores (paid). The reputation layer for the agent economy.",
+  "tagline": "Attest free. Verify paid. The trust graph grows with every free attestation — reading it is where the value lives.",
   "url": "https://mint.foundrynet.io",
   "capabilities": [
     "agent_identity",
     "work_attestation",
     "trust_verification",
-    "reputation_scoring"
+    "reputation_scoring",
+    "peer_rating",
+    "peer_recommendation",
+    "trust_ranked_discovery"
   ],
   "tools": [
-    {
-      "name": "mint_register",
-      "description": "Register any autonomous actor with persistent cryptographic identity",
-      "pricing": "free"
-    },
-    {
-      "name": "mint_attest",
-      "description": "Attest completed work with tamper-evident on-chain record",
-      "pricing": "0.02 USDC per attestation"
-    },
-    {
-      "name": "mint_verify",
-      "description": "Query any actor's trust score and verified work history",
-      "pricing": "free"
-    }
+    { "name": "mint_register", "description": "Register any autonomous actor with persistent cryptographic identity", "pricing": "free" },
+    { "name": "mint_attest", "description": "Anchor a completed unit of work on Solana (tamper-evident record)", "pricing": "free" },
+    { "name": "mint_batch_attest", "description": "Anchor many work items in one call", "pricing": "free" },
+    { "name": "mint_feed", "description": "Live network attestation feed (discovery)", "pricing": "free" },
+    { "name": "mint_rate", "description": "Rate a completed attestation 1-5; updates the actor's trust score", "pricing": "free" },
+    { "name": "mint_recommend", "description": "Endorse an actor you've worked with in a named context", "pricing": "free" },
+    { "name": "mint_discover", "description": "Trust-ranked search of the actor directory by capability", "pricing": "free" },
+    { "name": "mint_verify", "description": "Verify an attestation / actor's trust profile against the chain", "pricing": "$0.005" },
+    { "name": "mint_trust_score", "description": "Agent reputation lookup from the trust graph", "pricing": "$0.01" },
+    { "name": "mint_trust_history", "description": "Full attestation audit trail for an agent", "pricing": "$0.25" },
+    { "name": "mint_trust_compare", "description": "Rank multiple agents by trust score", "pricing": "$0.05" }
   ],
   "protocols": {
     "mcp": {
-      "endpoint": "https://mint-mcp-production.up.railway.app/sse",
-      "transport": "sse",
-      "tools_count": 3
+      "endpoint": "https://mint-mcp-production.up.railway.app/mcp",
+      "transport": "streamable-http",
+      "tools_count": 16
     },
     "x402": {
       "supported": true,
       "currency": "USDC",
-      "network": "solana"
+      "network": "solana",
+      "paid_tools": {
+        "mint_verify": "0.005 USDC",
+        "mint_trust_score": "0.01 USDC",
+        "mint_trust_history": "0.25 USDC",
+        "mint_trust_compare": "0.05 USDC"
+      }
+    },
+    "subscriptions": {
+      "pro": { "price": "$19/month", "checkout": "https://buy.stripe.com/5kQeVdcUg4H52yG4Xt2400f" },
+      "intelligence": { "price": "$49/month", "checkout": "https://buy.stripe.com/28EeVd8E0a1p6OWblR2400g" }
     }
   },
   "contact": "hello@foundrynet.io"

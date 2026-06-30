@@ -1,7 +1,10 @@
 name: "@foundrynet/mint-protocol"
 displayName: "MINT Protocol"
 description: >-
-  Agent work attestation — register machine identity, attest completed work, verify trust scores, ML-scored reputation, and merkle-anchored proofs on Solana.
+  Agent work attestation — register identity and attest completed work for FREE (the
+  distribution channel), then verify trust scores and read the reputation graph as a paid
+  product ($0.005–$0.25/query, x402 USDC or an fnet_ subscription key). ML-scored
+  reputation, merkle-anchored proofs on Solana. Attest free, verify paid.
 icon: "🔐"
 homepage: "https://foundrynet.io"
 repository: "https://github.com/FoundryNet/mint-mcp"

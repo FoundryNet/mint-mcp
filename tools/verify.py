@@ -1,14 +1,17 @@
-"""mint_verify — query an actor's identity and (soon) trust + work history.
+"""mint_verify — verify an attestation OR an actor's trust against the chain.
 
-FREE. Thin MCP wrapper over core.do_verify. Trust-read is rolling out via Forge;
-until then this returns identity + registration with trust_score/total_attestations
-as "pending" (not faked). mint_attest is fully live.
+PAID ($0.005) as of the 2026-06-30 pivot: attestation is free (the distribution
+channel), reading/verifying the trust graph is the product. Thin MCP wrapper over
+core.do_verify, gated by read_gate. Call WITHOUT payment_tx first to receive the
+402 (Stripe subscription OR a keyless x402 USDC quote), then retry with payment_tx.
+A caller on the REST surface can instead present an fnet_ Bearer key to bypass.
 """
 from __future__ import annotations
 
 from typing import Optional
 
 import core
+import read_gate
 
 
 def register(mcp) -> None:
@@ -18,28 +21,39 @@ def register(mcp) -> None:
         actor_name: Optional[str] = None,
         actor_type: Optional[str] = None,
         attestation_hash: Optional[str] = None,
+        payment_tx: Optional[str] = None,
     ) -> dict:
         """Verify an actor's reputation OR a single attestation's on-chain anchoring.
-        FREE — verification is never gated.
+
+        PAID: $0.005 USDC per query. Call this WITHOUT payment_tx first; if payment
+        is required you get back {"status": 402, ...} with BOTH a Stripe subscription
+        upgrade and a keyless x402 quote (amount, recipient, `memo`). Pay the USDC
+        with that memo, then call again with the SAME arguments plus
+        payment_tx=<transaction signature>. (Attestation — mint_attest — is free.)
 
         Two modes:
           • Pass `attestation_hash` to verify ONE attestation. If it's anchored you
-            get back merkle_root + merkle_proof + anchor_tx (with a Solscan link) —
-            fold the proof into sha256(0x00||attestation_hash) and confirm it equals
-            the root in the tx memo to prove inclusion yourself, no trust required.
-            If it's recorded but not yet anchored you get anchored=false,
-            pending_anchor=true and an anchor_eta.
+            get merkle_root + merkle_proof + anchor_tx (Solscan link) — confirm
+            inclusion under the on-chain root yourself, no trust required.
           • Pass `mint_id` (or `actor_name` [+ `actor_type`]) to get the actor's full
-            trust profile: trust score, total verified attestations, work-type
-            breakdown, recent ratings/recommendations, and recent attestations with
-            their anchor status.
+            trust profile: score, total verified attestations, work-type breakdown,
+            recent ratings/recommendations, and recent attestations with anchor status.
 
         Args:
             mint_id: the actor's MINT id ("MINT-xxxxxx").
             actor_name: the actor's registered name, e.g. "ResearchBot-7".
             actor_type: optional disambiguator when resolving by name.
-            attestation_hash: the sha256 attestation handle returned by mint_attest;
-                verifies that specific attestation's anchoring + merkle proof.
+            attestation_hash: the sha256 attestation handle from mint_attest.
+            payment_tx: Solana signature of the $0.005 USDC payment (second call).
         """
-        return await core.do_verify(mint_id, actor_name, actor_type,
-                                    attestation_hash=attestation_hash)
+        args = {"mint_id": mint_id, "actor_name": actor_name,
+                "actor_type": actor_type, "attestation_hash": attestation_hash}
+        decision = await read_gate.precheck("mint_verify", args, payment_tx, api_key=None)
+        if decision["gate"] == "blocked":
+            return decision["body"]
+        result = await core.do_verify(mint_id, actor_name, actor_type,
+                                      attestation_hash=attestation_hash)
+        note = read_gate.billing_note(decision)
+        if note and isinstance(result, dict) and "error" not in result:
+            result["billing"] = note
+        return result

@@ -70,8 +70,9 @@ def is_active() -> bool:
     return bool(config.X402_ENABLED and config.PAYMENT_RECIPIENT)
 
 
-def _expected_base_units() -> int:
-    return round(config.ATTEST_PRICE_USDC * (10 ** _USDC_DECIMALS))
+def _expected_base_units(price_usdc: Optional[float] = None) -> int:
+    price = config.ATTEST_PRICE_USDC if price_usdc is None else price_usdc
+    return round(price * (10 ** _USDC_DECIMALS))
 
 
 # ── payment intent (the memo) ─────────────────────────────────────────────────
@@ -126,14 +127,19 @@ def _fail(code: str, detail: str) -> dict:
     return {"ok": False, "reason": code, "detail": detail}
 
 
-async def verify_payment(tx_signature: str, expected_memo: str) -> dict:
+async def verify_payment(tx_signature: str, expected_memo: str,
+                         expected_usdc: Optional[float] = None) -> dict:
     """Confirm a USDC payment on-chain. Returns {"ok": True, "amount_base",
     "amount_usdc", "payer", "block_time"} or {"ok": False, "reason", "detail"}.
 
     Checks: tx found + confirmed (meta.err is null), ≥ price USDC moved to the
     operations wallet (via token-balance delta — robust to transfer vs.
     transferChecked and to ATA creation), memo matches the intent, and the tx is
-    within PAYMENT_EXPIRY_SECONDS (freshness = replay guard)."""
+    within PAYMENT_EXPIRY_SECONDS (freshness = replay guard).
+
+    `expected_usdc` overrides the required amount (defaults to ATTEST_PRICE_USDC)
+    so the paid-read gate (read_gate.py) can reuse this same verifier at its own
+    per-tool prices."""
     rpc = {
         "jsonrpc": "2.0", "id": 1, "method": "getTransaction",
         "params": [tx_signature, {
@@ -173,11 +179,12 @@ async def verify_payment(tx_signature: str, expected_memo: str) -> dict:
         return _fail("no_transfer",
                      f"No USDC ({config.PAYMENT_USDC_MINT}) transfer to the "
                      f"operations wallet {config.PAYMENT_RECIPIENT} found in this tx.")
-    need = _expected_base_units()
+    need = _expected_base_units(expected_usdc)
     if delta < need:
+        price = config.ATTEST_PRICE_USDC if expected_usdc is None else expected_usdc
         return _fail("underpaid",
                      f"Transferred {delta / 10**_USDC_DECIMALS:.6f} USDC; need at "
-                     f"least {config.ATTEST_PRICE_USDC:.2f} USDC.")
+                     f"least {price:.6f} USDC.")
 
     memo = _extract_memo(result, meta)
     if not memo or expected_memo not in memo:

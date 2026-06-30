@@ -18,8 +18,10 @@ Optional:
   FORGE_API_URL     Default https://forge.foundrynet.io
   PORT              Default 8080 (Railway injects this)
   REQUEST_TIMEOUT   HTTP timeout seconds, default 30
-  X402_ENABLED      "true" to arm the pay-per-attest gate (DEFAULT true; the
-                    kill switch — set "false" to make attest free again)
+  X402_ENABLED      "true" to arm the pay-per-attest gate (DEFAULT FALSE as of the
+                    2026-06-30 pricing pivot — attestation is FREE, the distribution
+                    channel; revenue moved to the paid trust-read gate, READ_GATE).
+                    Set "true" only to revert to the legacy pay-per-attest model.
   ATTEST_PRICE_USDC Price per attest in USDC, default "0.02"
   PAYMENT_RECIPIENT base58 operations wallet that must receive the USDC (the gate
                     is inert until this is set; defaults to SOLANA_WALLET)
@@ -71,13 +73,15 @@ REQUEST_TIMEOUT = int(_env("REQUEST_TIMEOUT", "30"))
 # on-chain before the attestation runs. Plain JSON-RPC over httpx — NO solders /
 # x402[svm] extra, so it can't crash-loop at boot the way the facilitator gate did.
 #
-# DEFAULT ON (X402_ENABLED=true), but fail-safe: the gate stays inert unless
-# PAYMENT_RECIPIENT resolves to a wallet, so a misconfigured deploy serves attest
-# for free rather than rejecting every call. Set X402_ENABLED=false to disable.
+# DEFAULT OFF as of the 2026-06-30 pricing pivot: attestation is FREE (the
+# distribution channel — every free attestation grows the trust graph), and
+# revenue moves to the paid trust-READ gate below. The old pay-per-attest model
+# is still here behind X402_ENABLED=true, fail-safe inert unless PAYMENT_RECIPIENT
+# resolves to a wallet.
 def _flag(name: str, default: bool) -> bool:
     return _env(name, "true" if default else "false").strip().lower() in ("1", "true", "yes", "on")
 
-X402_ENABLED   = _flag("X402_ENABLED", True)
+X402_ENABLED   = _flag("X402_ENABLED", False)
 
 # base58 pay-to address for the legacy facilitator gate; also the default
 # operations wallet the new gate expects to receive payment. Railway overrides it.
@@ -90,6 +94,31 @@ PAYMENT_VERIFY_RPC     = _env("PAYMENT_VERIFY_RPC", "https://api.mainnet-beta.so
 PAYMENT_USDC_MINT      = _env("PAYMENT_USDC_MINT", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v").strip()
 PAYMENT_EXPIRY_SECONDS = int(_env("PAYMENT_EXPIRY_SECONDS", "300"))
 PAYMENT_CREDIT_TTL_SECONDS = int(_env("PAYMENT_CREDIT_TTL_SECONDS", "86400"))
+
+# ── Paid trust-READ gate (read_gate.py) ──────────────────────────────────────
+# The 2026-06-30 pivot: ATTEST FREE, VERIFY PAID. Writing to the trust graph is
+# free (distribution); READING it is the product. Per-tool USDC micro-pricing,
+# Stripe-first (subscription) with a keyless x402 USDC fallback. An fnet_ Bearer
+# key bypasses the gate (billed downstream via Stripe). Same on-chain verification
+# primitives as payment_gate (reused), same fail-safe: inert unless a recipient
+# wallet is set AND READ_GATE_ENABLED, so a misconfigured deploy serves reads free
+# rather than rejecting every call.
+READ_GATE_ENABLED = _flag("READ_GATE_ENABLED", True)
+
+# Per-tool price in USDC. Keys are the canonical tool names; the REST routes +
+# MCP tools look their price up here so pricing lives in ONE place.
+READ_PRICES = {
+    "mint_verify":        float(_env("PRICE_MINT_VERIFY", "0.005")),
+    "mint_trust_score":   float(_env("PRICE_MINT_TRUST_SCORE", "0.01")),
+    "mint_trust_history": float(_env("PRICE_MINT_TRUST_HISTORY", "0.25")),
+    "mint_trust_compare": float(_env("PRICE_MINT_TRUST_COMPARE", "0.05")),
+}
+
+# Stripe subscription links offered in every paid-read 402 (Stripe-first, same
+# links the data-server fleet uses). Override per-deploy via env if they rotate.
+STRIPE_LINK_PRO   = _env("STRIPE_LINK_PRO",   "https://buy.stripe.com/5kQeVdcUg4H52yG4Xt2400f")  # $19/mo
+STRIPE_LINK_INTEL = _env("STRIPE_LINK_INTEL", "https://buy.stripe.com/28EeVd8E0a1p6OWblR2400g")  # $49/mo
+
 
 # ── Merkle batch anchoring (merkle_batch.py) ─────────────────────────────────
 # Instead of one on-chain settlement per attestation (~0.002 SOL of rent each),

@@ -1,0 +1,41 @@
+{
+  "schema_version": "2024-11-05",
+  "name": "MINT Protocol",
+  "name_for_model": "mint_protocol",
+  "description": "Universal work attestation + trust graph for autonomous agents. Attest free, verify paid: writing to the trust graph (register, attest, batch attest, feed, rate, recommend, discover) is free — the distribution channel; reading it (verify, trust score/history/compare) is the paid product.",
+  "tagline": "Attest free. Verify paid. The trust graph grows with every free attestation — reading it is where the value lives.",
+  "contact": "hello@foundrynet.io",
+  "legal_info_url": "https://foundrynet.io",
+  "endpoints": [
+    {
+      "url": "https://mint-mcp-production.up.railway.app/mcp",
+      "transport": "streamable-http",
+      "name": "MINT Protocol MCP"
+    }
+  ],
+  "pricing_model": "attest_free_verify_paid",
+  "tools": {
+    "free": [
+      { "name": "mint_register", "description": "Register an actor with a persistent cryptographic identity" },
+      { "name": "mint_attest", "description": "Anchor a completed unit of work on Solana (free, unlimited)" },
+      { "name": "mint_batch_attest", "description": "Anchor many work items in one call (free)" },
+      { "name": "mint_feed", "description": "Live network attestation feed (free, discovery)" },
+      { "name": "mint_rate", "description": "Rate a completed attestation 1-5 (free)" },
+      { "name": "mint_recommend", "description": "Endorse an actor in a named context (free)" },
+      { "name": "mint_discover", "description": "Trust-ranked search of the actor directory (free)" }
+    ],
+    "paid": [
+      { "name": "mint_verify", "description": "Verify an attestation against the chain", "price_usdc": 0.005 },
+      { "name": "mint_trust_score", "description": "Agent trust lookup", "price_usdc": 0.01 },
+      { "name": "mint_trust_history", "description": "Full attestation audit trail", "price_usdc": 0.25 },
+      { "name": "mint_trust_compare", "description": "Rank agents by trust score", "price_usdc": 0.05 }
+    ]
+  },
+  "payment": {
+    "x402": { "supported": true, "currency": "USDC", "network": "solana" },
+    "subscriptions": {
+      "pro": { "price": "$19/month", "checkout": "https://buy.stripe.com/5kQeVdcUg4H52yG4Xt2400f" },
+      "intelligence": { "price": "$49/month", "checkout": "https://buy.stripe.com/28EeVd8E0a1p6OWblR2400g" }
+    }
+  }
+}

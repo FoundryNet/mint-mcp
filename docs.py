@@ -70,11 +70,11 @@ ENDPOINTS = [
                         "Solana mainnet against the actor's mint_id. Returns a real "
                         "Solscan verify URL. data_hash is a reproducible SHA-256 over the "
                         "canonical payload — recompute it to verify the record independently. "
-                        "PAYMENT: present an fnet_ Bearer key (Stripe-billed) OR pay 0.02 "
-                        "USDC on Solana. Without either, this returns HTTP 402 with a "
-                        "payment_required body (amount, recipient, memo); send the USDC with "
-                        "that memo, then retry the SAME request with payment_tx=<signature>."),
-        "auth": "bearer_or_x402", "cost": "$0.02 per attestation",
+                        "FREE and unlimited (the 2026-06-30 pivot — attestation is the "
+                        "distribution channel; every free attestation grows the trust graph). "
+                        "Reading the graph back — /v1/verify and the /v1/trust/* tools — is "
+                        "the paid product."),
+        "auth": "none", "cost": "FREE",
         "request": {
             "mint_id": "MINT-abc123",
             "work_type": "code_review",
@@ -82,7 +82,6 @@ ENDPOINTS = [
             "summary": "Reviewed 47 files across the auth module",
             "input_hash": "sha256:…",
             "output_hash": "sha256:…",
-            "payment_tx": "2FdHy2…  (the USDC payment signature, on the retry call)",
         },
         "request_notes": {
             "mint_id": "required — the actor's MINT id",
@@ -92,10 +91,6 @@ ENDPOINTS = [
             "summary": "short description of the work",
             "input_hash": "optional SHA-256 of the input",
             "output_hash": "optional SHA-256 of the output",
-            "payment_tx": "Solana signature of the 0.02 USDC payment (memo = the "
-                          "intent from the 402). Omit on the first call to get the "
-                          "402 payment instructions; required on the paid retry "
-                          "unless you pass an fnet_ Bearer key.",
         },
         "response": {
             "attestation_id": "job_7f2c…",
@@ -109,17 +104,58 @@ ENDPOINTS = [
         },
     },
     {
+        "group": "Work Verification",
+        "method": "POST", "path": "/v1/batch/attest",
+        "summary": "Attest many work items at once",
+        "description": ("Anchor a batch of completed work items in one call — each item "
+                        "attests exactly like /v1/attest and drains into the next merkle "
+                        "batch, so the whole batch settles in a single on-chain tx. FREE."),
+        "auth": "none", "cost": "FREE",
+        "request": {"attestations": [
+            {"mint_id": "MINT-abc123", "work_type": "analysis", "duration_seconds": 12,
+             "summary": "Scored 200 markets"},
+        ]},
+        "request_notes": {"attestations": "required — list of attestation objects (1–100), "
+                                          "same fields as /v1/attest"},
+        "response": {"attested": 1, "total": 1,
+                     "results": [{"index": 0, "attestation_id": "job_7f2c…"}]},
+    },
+    {
+        "group": "Discovery",
+        "method": "GET", "path": "/v1/feed",
+        "summary": "Live network attestation feed",
+        "description": ("The newest attestations across the whole network — originating "
+                        "agent, summary, trust score, ML confidence, anchor status, merkle "
+                        "root + Solscan link — plus showcase stats. FREE, CORS-open."),
+        "auth": "none", "cost": "FREE",
+        "request": {"limit": 50},
+        "request_notes": {"limit": "query param — how many recent attestations (1–200)"},
+        "response": {"attestations": [{"summary": "…", "trust_score": 87.3, "status": "anchored"}],
+                     "count": 1, "stats": {}},
+    },
+    {
         "group": "Trust",
         "method": "POST", "path": "/v1/verify",
-        "summary": "Query an actor's full trust profile",
+        "summary": "Verify an actor / attestation against the chain",
         "description": ("Look up any actor's reputation: trust score, attestation volume, "
                         "average rating, recommendations, work-type breakdown, and recent "
-                        "ratings/recommendations. Pass mint_id OR actor_name."),
-        "auth": "none", "cost": "FREE",
-        "request": {"mint_id": "MINT-abc123"},
+                        "ratings/recommendations — or pass attestation_hash to verify ONE "
+                        "attestation's on-chain anchoring + merkle proof. Pass mint_id OR "
+                        "actor_name OR attestation_hash. PAID ($0.005): present an fnet_ "
+                        "Bearer key (Stripe-billed) OR pay 0.005 USDC on Solana. Without "
+                        "either, returns HTTP 402 with both a subscription upgrade and a "
+                        "keyless x402 quote (amount, recipient, memo); pay, then retry the "
+                        "SAME request with payment_tx=<signature>."),
+        "auth": "bearer_or_x402", "cost": "$0.005 per query",
+        "request": {"mint_id": "MINT-abc123",
+                    "payment_tx": "2FdHy2…  (the USDC payment signature, on the retry call)"},
         "request_notes": {
-            "mint_id": "the actor's MINT id (or use actor_name)",
+            "mint_id": "the actor's MINT id (or use actor_name / attestation_hash)",
             "actor_name": "optional — resolve by registered name instead",
+            "attestation_hash": "optional — verify one attestation's anchoring + merkle proof",
+            "payment_tx": "Solana signature of the 0.005 USDC payment (memo = the intent "
+                          "from the 402). Omit on the first call to get the 402; required "
+                          "on the paid retry unless you pass an fnet_ Bearer key.",
         },
         "response": {
             "mint_id": "MINT-abc123",
@@ -136,6 +172,63 @@ ENDPOINTS = [
             "recent_ratings": [{"score": 5, "tags": ["fast"], "from": "MINT-xyz"}],
             "verification": "on-chain",
         },
+    },
+    {
+        "group": "Trust",
+        "method": "POST", "path": "/v1/trust/score",
+        "summary": "Agent reputation lookup",
+        "description": ("Compact trust score + headline counts for one MINT identity, "
+                        "freshly recomputed from every signal (attestations, ratings, "
+                        "recommendations, recency). PAID ($0.01): fnet_ Bearer key OR pay "
+                        "0.01 USDC; without either, returns 402 (subscription + x402 quote)."),
+        "auth": "bearer_or_x402", "cost": "$0.01 per query",
+        "request": {"agent_id": "MINT-abc123",
+                    "payment_tx": "2FdHy2…  (on the retry call)"},
+        "request_notes": {
+            "agent_id": "required — the agent's MINT id",
+            "payment_tx": "Solana signature of the 0.01 USDC payment; omit first call to "
+                          "get the 402, unless you pass an fnet_ Bearer key.",
+        },
+        "response": {"agent_id": "MINT-abc123", "trust_score": 87.3,
+                     "total_attestations": 47291, "avg_rating": 4.8,
+                     "recommendations": 12, "reliability": {"type": "okf-reliability-v1"}},
+    },
+    {
+        "group": "Trust",
+        "method": "POST", "path": "/v1/trust/history",
+        "summary": "Full attestation audit trail",
+        "description": ("Every anchored/queued attestation for an agent over the last "
+                        "`days`, with work type, quality scores, and on-chain anchor "
+                        "status. PAID ($0.25): fnet_ Bearer key OR pay 0.25 USDC; without "
+                        "either, returns 402."),
+        "auth": "bearer_or_x402", "cost": "$0.25 per query",
+        "request": {"agent_id": "MINT-abc123", "days": 30,
+                    "payment_tx": "2FdHy2…  (on the retry call)"},
+        "request_notes": {
+            "agent_id": "required — the agent's MINT id",
+            "days": "optional — lookback window 1–365 (default 30)",
+            "payment_tx": "Solana signature of the 0.25 USDC payment (or use an fnet_ key).",
+        },
+        "response": {"agent_id": "MINT-abc123", "period_days": 30, "attestations": 412,
+                     "anchored": 410, "entries": [{"attestation_hash": "…", "status": "anchored"}]},
+    },
+    {
+        "group": "Trust",
+        "method": "POST", "path": "/v1/trust/compare",
+        "summary": "Rank agents by trust score",
+        "description": ("Head-to-head leaderboard across multiple agents, each scored from "
+                        "its full trust profile. PAID ($0.05): fnet_ Bearer key OR pay 0.05 "
+                        "USDC; without either, returns 402."),
+        "auth": "bearer_or_x402", "cost": "$0.05 per query",
+        "request": {"agent_ids": ["MINT-abc123", "MINT-xyz789"],
+                    "payment_tx": "2FdHy2…  (on the retry call)"},
+        "request_notes": {
+            "agent_ids": "required — list of MINT ids to rank (2–25)",
+            "payment_tx": "Solana signature of the 0.05 USDC payment (or use an fnet_ key).",
+        },
+        "response": {"comparison": [{"agent_id": "MINT-abc123", "trust_score": 87.3},
+                                    {"agent_id": "MINT-xyz789", "trust_score": 71.0}],
+                     "ranked_count": 2},
     },
     {
         "group": "Feedback",

@@ -34,6 +34,7 @@ import forge_client
 import merkle_batch
 import ml_scorer
 import payment_gate
+import read_gate
 import supa
 import tools
 
@@ -100,10 +101,20 @@ async def health(request: Request) -> JSONResponse:
         "status":            "ok",
         "service":           "mint-protocol-mcp",
         "transport":         "streamable-http",
-        "tools":             ["mint_register", "mint_attest", "mint_verify",
-                              "mint_rate", "mint_recommend", "mint_discover",
+        "tools":             ["mint_register", "mint_attest", "mint_batch_attest",
+                              "mint_feed", "mint_rate", "mint_recommend", "mint_discover",
+                              "mint_verify", "mint_trust_score", "mint_trust_history",
+                              "mint_trust_compare",
                               "mint_create_cell", "mint_join_cell", "mint_settle_cell",
                               "mint_create_policy", "mint_settle_policy"],
+        "pricing_model":     "attest_free_verify_paid",   # 2026-06-30 pivot
+        "read_gate":         {
+            "enabled": read_gate.is_active(),
+            "prices_usdc": config.READ_PRICES,
+            "paid_tools": list(config.READ_PRICES),
+            "free_tools": ["mint_register", "mint_attest", "mint_batch_attest", "mint_feed",
+                           "mint_rate", "mint_recommend", "mint_discover"],
+        },
         "foundrynet_onchain": {
             "program_id": config.FOUNDRY_PROGRAM_ID,
             "cluster":    config.FOUNDRY_CLUSTER,
@@ -221,12 +232,79 @@ async def rest_attest(request: Request) -> JSONResponse:
     return _resp(d)
 
 
+async def _paid_read(request: Request, tool: str, args: dict, runner):
+    """Shared paid-read wrapper for the REST surface: an fnet_ Bearer key bypasses,
+    else a keyless x402 payment_tx is verified on-chain, else 402 (read_gate). On
+    success runs `runner()` and folds in the billing note."""
+    decision = await read_gate.precheck(
+        tool, args, (await _json_body_cached(request)).get("payment_tx"),
+        api_key=_bearer(request))
+    if decision["gate"] == "blocked":
+        return JSONResponse(decision["body"], status_code=402)
+    result = await runner()
+    note = read_gate.billing_note(decision)
+    if note and isinstance(result, dict) and "error" not in result:
+        result["billing"] = note
+    return _resp(result)
+
+
+async def _json_body_cached(request: Request) -> dict:
+    """Parse the JSON body once and stash it on the request (a paid-read route reads
+    it for both payment_tx and the operation's args)."""
+    if not hasattr(request.state, "_json"):
+        request.state._json = await _json_body(request)
+    return request.state._json
+
+
 @mcp.custom_route("/v1/verify", methods=["POST"])
 async def rest_verify(request: Request) -> JSONResponse:
+    # PAID ($0.005) as of the 2026-06-30 pivot. An fnet_ Bearer key bypasses; else
+    # pass payment_tx (keyless x402). Without either, read_gate returns 402.
+    b = await _json_body_cached(request)
+    return await _paid_read(
+        request, "mint_verify",
+        {"mint_id": b.get("mint_id"), "actor_name": b.get("actor_name"),
+         "actor_type": b.get("actor_type"), "attestation_hash": b.get("attestation_hash")},
+        lambda: core.do_verify(b.get("mint_id"), b.get("actor_name"),
+                               b.get("actor_type"), attestation_hash=b.get("attestation_hash")))
+
+
+@mcp.custom_route("/v1/batch/attest", methods=["POST"])
+async def rest_batch_attest(request: Request) -> JSONResponse:
+    # FREE — batch attestation (the distribution channel). An fnet_ key binds the
+    # attestations to the caller's Forge account; otherwise FORGE_API_KEY is used.
     b = await _json_body(request)
-    return _resp(await core.do_verify(
-        b.get("mint_id"), b.get("actor_name"), b.get("actor_type"),
-        attestation_hash=b.get("attestation_hash")))
+    return _resp(await core.do_batch_attest(
+        b.get("attestations") or [], api_key=_bearer(request)))
+
+
+@mcp.custom_route("/v1/trust/score", methods=["POST"])
+async def rest_trust_score(request: Request) -> JSONResponse:
+    # PAID ($0.01).
+    b = await _json_body_cached(request)
+    aid = b.get("agent_id") or b.get("mint_id") or ""
+    return await _paid_read(request, "mint_trust_score", {"agent_id": aid},
+                            lambda: core.do_trust_score(aid))
+
+
+@mcp.custom_route("/v1/trust/history", methods=["POST"])
+async def rest_trust_history(request: Request) -> JSONResponse:
+    # PAID ($0.25).
+    b = await _json_body_cached(request)
+    aid = b.get("agent_id") or b.get("mint_id") or ""
+    days = b.get("days", 30)
+    return await _paid_read(request, "mint_trust_history",
+                            {"agent_id": aid, "days": days},
+                            lambda: core.do_trust_history(aid, days=days))
+
+
+@mcp.custom_route("/v1/trust/compare", methods=["POST"])
+async def rest_trust_compare(request: Request) -> JSONResponse:
+    # PAID ($0.05).
+    b = await _json_body_cached(request)
+    ids = b.get("agent_ids") or b.get("mint_ids") or []
+    return await _paid_read(request, "mint_trust_compare", {"agent_ids": ids},
+                            lambda: core.do_trust_compare(ids))
 
 
 @mcp.custom_route("/v1/batch/status", methods=["GET"])
@@ -310,15 +388,20 @@ _AGENT_CARD = {
         "peer_recommendation",
         "trust_ranked_discovery",
     ],
+    "tagline": ("Attest free. Verify paid. The trust graph grows with every free "
+                "attestation — reading it is where the value lives."),
     "tools": [
         {"name": "mint_register",
          "description": "Register any autonomous actor with persistent cryptographic identity",
          "pricing": "free"},
         {"name": "mint_attest",
-         "description": "Attest completed work with tamper-evident on-chain record",
-         "pricing": "0.02 USDC per attestation"},
-        {"name": "mint_verify",
-         "description": "Query any actor's full trust profile and verified work history",
+         "description": "Anchor a completed unit of work on Solana (tamper-evident record)",
+         "pricing": "free"},
+        {"name": "mint_batch_attest",
+         "description": "Anchor many work items in one call",
+         "pricing": "free"},
+        {"name": "mint_feed",
+         "description": "Live network attestation feed (discovery)",
          "pricing": "free"},
         {"name": "mint_rate",
          "description": "Rate a completed attestation 1-5; updates the actor's trust score",
@@ -329,6 +412,18 @@ _AGENT_CARD = {
         {"name": "mint_discover",
          "description": "Trust-ranked search of the actor directory by capability",
          "pricing": "free"},
+        {"name": "mint_verify",
+         "description": "Verify an attestation / actor's trust profile against the chain",
+         "pricing": "$0.005"},
+        {"name": "mint_trust_score",
+         "description": "Agent reputation lookup from the trust graph",
+         "pricing": "$0.01"},
+        {"name": "mint_trust_history",
+         "description": "Full attestation audit trail for an agent",
+         "pricing": "$0.25"},
+        {"name": "mint_trust_compare",
+         "description": "Rank multiple agents by trust score",
+         "pricing": "$0.05"},
         {"name": "mint_create_cell",
          "description": "Open a stake-backed on-chain work cell (FoundryNet devnet)",
          "pricing": "network fee"},
@@ -349,12 +444,17 @@ _AGENT_CARD = {
         "mcp": {
             "endpoint": config.PUBLIC_MCP_URL,
             "transport": "streamable-http",
-            "tools_count": 11,
+            "tools_count": 16,
         },
         "x402": {
             "supported": True,
             "currency": "USDC",
             "network": "solana",
+            "paid_tools": {k: f"{v} USDC" for k, v in config.READ_PRICES.items()},
+        },
+        "subscriptions": {
+            "pro":          {"price": "$19/month", "checkout": config.STRIPE_LINK_PRO},
+            "intelligence": {"price": "$49/month", "checkout": config.STRIPE_LINK_INTEL},
         },
     },
     "contact": "hello@foundrynet.io",
@@ -369,16 +469,48 @@ async def agent_card(request: Request) -> JSONResponse:
 
 # ── Discovery: well-known/mcp directory crawlers ─────────────────────────────
 
+_FREE_TOOLS = ["mint_register", "mint_attest", "mint_batch_attest", "mint_feed",
+               "mint_rate", "mint_recommend", "mint_discover"]
+
+
+def _mcp_directory() -> dict:
+    """Discovery manifest for .well-known/mcp[.json] crawlers — endpoint + the
+    free/paid tool split + payment options, built from config so it never drifts."""
+    return {
+        "schema_version": "2024-11-05",
+        "name": "MINT Protocol",
+        "description": ("Universal work attestation + trust graph for autonomous agents. "
+                        "Attest free, verify paid."),
+        "tagline": ("Attest free. Verify paid. The trust graph grows with every free "
+                    "attestation — reading it is where the value lives."),
+        "pricing_model": "attest_free_verify_paid",
+        "endpoints": [{
+            "url": config.PUBLIC_MCP_URL, "transport": "streamable-http",
+            "name": "MINT Protocol MCP",
+        }],
+        "tools": {
+            "free": _FREE_TOOLS,
+            "paid": {k: f"{v} USDC" for k, v in config.READ_PRICES.items()},
+        },
+        "payment": {
+            "x402": {"supported": True, "currency": "USDC", "network": "solana"},
+            "subscriptions": {
+                "pro":          {"price": "$19/month", "checkout": config.STRIPE_LINK_PRO},
+                "intelligence": {"price": "$49/month", "checkout": config.STRIPE_LINK_INTEL},
+            },
+        },
+        "contact": "hello@foundrynet.io",
+    }
+
+
 @mcp.custom_route("/.well-known/mcp", methods=["GET"])
 async def mcp_endpoints(request: Request) -> JSONResponse:
-    return JSONResponse(
-        {"endpoints": [{
-            "url":       config.PUBLIC_MCP_URL,
-            "transport": "streamable-http",
-            "name":      "MINT Protocol MCP",
-        }]},
-        headers={"Cache-Control": "public, max-age=300"},
-    )
+    return JSONResponse(_mcp_directory(), headers={"Cache-Control": "public, max-age=300"})
+
+
+@mcp.custom_route("/.well-known/mcp.json", methods=["GET"])
+async def mcp_endpoints_json(request: Request) -> JSONResponse:
+    return JSONResponse(_mcp_directory(), headers={"Cache-Control": "public, max-age=300"})
 
 
 async def _live_tools() -> list:

@@ -2,8 +2,9 @@
 
 [![Available on CodeGuilds](https://img.shields.io/badge/Available_on-CodeGuilds-6366f1)](https://codeguilds.dev/packages/mint-mcp)
 
-**The trust layer for the agent economy.** One MCP server, six tools, one identity any
-autonomous agent can carry across the ecosystem.
+**The trust layer for the agent economy.** One MCP server, sixteen tools, one identity any
+autonomous agent can carry across the ecosystem. **Attest free, verify paid** — writing to
+the trust graph is free (the distribution channel); reading it is the product.
 
 MINT Protocol gives **any** autonomous actor — an AI agent, a physical machine, an IoT
 device, a backend service — a persistent cryptographic **identity**, lets it **attest**
@@ -68,35 +69,53 @@ code blocks for CrewAI, LangChain, AutoGen, LlamaIndex, and Semantic Kernel.
 
 *Agents discover, assess trust, attest work, and grow the network — every attestation is merkle-anchored and independently verifiable.*
 
-## The six tools
+## Tools — attest free, verify paid
+
+> **Attest free. Verify paid.**
+> The trust graph grows with every free attestation. Reading it is where the value lives.
+
+**Free — write the graph + discovery** (every free attestation is a distribution point):
 
 | Tool | What it does | Price |
 |------|--------------|-------|
-| `mint_register`  | Register any autonomous actor with a persistent cryptographic identity + Solana wallet. Idempotent. | **Free** — identity is never gated |
-| `mint_attest`    | Attest completed work with a tamper-evident on-chain record; updates the actor's trust score. | **0.02 USDC** (x402 or Forge billing key) |
-| `mint_verify`    | Query any actor's full trust profile, trust score, and verified work history. | **Free** — reputation is never gated |
-| `mint_rate`      | Rate a completed attestation 1–5; feeds the actor's trust score. | **Free** |
-| `mint_recommend` | Endorse an actor you've worked with in a named context. | **Free** |
-| `mint_discover`  | Trust-ranked search of the actor directory by capability. | **Free** |
+| `mint_register`     | Register any autonomous actor with a persistent cryptographic identity + Solana wallet. Idempotent. | **Free** |
+| `mint_attest`       | Anchor a completed unit of work on Solana — tamper-evident record, updates trust. | **Free, unlimited** |
+| `mint_batch_attest` | Anchor many work items in one call. | **Free** |
+| `mint_feed`         | Live network attestation feed (the public showcase). | **Free** |
+| `mint_rate`         | Rate a completed attestation 1–5; feeds the actor's trust score. | **Free** |
+| `mint_recommend`    | Endorse an actor you've worked with in a named context. | **Free** |
+| `mint_discover`     | Trust-ranked search of the actor directory by capability. | **Free** |
 
-The network grows on free identity, verification, rating, recommendation, and discovery;
-revenue comes from attestation volume. Trust scores are built from verified on-chain
-history, ratings, and peer endorsements — absence of data reads as neutral (50), not zero.
+**Paid — read the trust graph** (the product; x402 USDC per call **or** an `fnet_` subscription key):
 
-## Economic model (two layers)
+| Tool | What it does | Price |
+|------|--------------|-------|
+| `mint_verify`        | Verify an attestation / actor's trust profile against the chain. | **$0.005** |
+| `mint_trust_score`   | Agent reputation lookup from the trust graph. | **$0.01** |
+| `mint_trust_history` | Full attestation audit trail for an agent. | **$0.25** |
+| `mint_trust_compare` | Rank multiple agents by trust score. | **$0.05** |
 
-MINT runs a deliberately sequenced two-layer model:
+Trust scores are built from verified on-chain history, ratings, and peer endorsements —
+absence of data reads as neutral (50), not zero.
 
-- **Layer 1 — Attestation Revenue (live):** agents pay **0.02 USDC per attestation**
-  via the x402 gate. Revenue is collected in USDC with **no token dependency** — this
-  is the core business model, live on mainnet today.
-- **Layer 2 — MINT Token Utility (roadmap, not active):** the MINT token exists on
-  Solana but minting/distribution are dormant. Planned utility — staking for
-  discoverability, work-category access licensing, and trust-weighted governance —
-  activates only once the network reaches meaningful attestation volume.
+## Economic model — attest free, verify paid (the 2026-06-30 pivot)
 
-Full detail, including the Tron-style stake-for-access architecture, is in
-**[TOKENOMICS.md](TOKENOMICS.md)**.
+MINT flipped its pricing: **attestation is the distribution channel, not the product.**
+
+- **Writing is free.** Every actor that attests becomes a distribution point for MINT,
+  and every free attestation grows the trust graph. Registration, attestation (single +
+  batch), the live feed, ratings, recommendations, and discovery are all free, unlimited.
+- **Reading is the product.** Verifying an attestation or an agent's reputation against
+  the chain is paid — keyless **x402 USDC micro-payments** per call (verify $0.005 →
+  trust_history $0.25) **or** a Stripe subscription (**Pro $19/mo**, **Intelligence
+  $49/mo**) whose `fnet_` key bypasses per-call payment. Revenue is collected in USDC /
+  Stripe with **no token dependency**.
+- **MINT Token Utility (roadmap, not active):** the token exists on Solana but
+  minting/distribution are dormant; staking-for-discoverability and trust-weighted
+  governance activate only once the network reaches meaningful volume.
+
+Full detail is in **[TOKENOMICS.md](TOKENOMICS.md)**. To revert to the legacy
+pay-per-attest model, set `X402_ENABLED=true` (and `READ_GATE_ENABLED=false`).
 
 ## How it maps onto Forge (one key-holder, one relay path)
 
@@ -121,17 +140,22 @@ Full detail, including the Tron-style stake-for-access architecture, is in
 | `FORGE_API_KEY` | yes | — | `fnet_` internal service key — the only secret mint-mcp needs |
 | `FORGE_API_URL` | no | `https://forge.foundrynet.io` | |
 | `PORT` | no | `8080` | Railway injects this |
-| `X402_ENABLED` | no | `0` | Arm the x402 pay-per-attest gate (see `x402_gate.py`) |
-| `X402_PRICE_USDC` | no | `0.02` | Per-attest price under x402 |
-| `CDP_API_KEY` | iff x402 | — | Coinbase CDP facilitator key (mainnet) |
-| `SOLANA_WALLET` | no | `nFvAMGr…na1s` | base58 pay-to for x402 settlement |
+| `READ_GATE_ENABLED` | no | `true` | Arm the paid trust-read gate (verify + trust tools) |
+| `PRICE_MINT_VERIFY` | no | `0.005` | Per-call USDC price for `mint_verify` |
+| `PRICE_MINT_TRUST_SCORE` | no | `0.01` | Per-call USDC price for `mint_trust_score` |
+| `PRICE_MINT_TRUST_HISTORY` | no | `0.25` | Per-call USDC price for `mint_trust_history` |
+| `PRICE_MINT_TRUST_COMPARE` | no | `0.05` | Per-call USDC price for `mint_trust_compare` |
+| `STRIPE_LINK_PRO` / `STRIPE_LINK_INTEL` | no | baked in | Subscription checkout links shown in every 402 |
+| `PAYMENT_RECIPIENT` | no | `SOLANA_WALLET` | base58 ops wallet that receives x402 USDC |
+| `X402_ENABLED` | no | `false` | **Legacy** pay-per-attest gate — `true` reverts attest to paid |
 
 > **No relay key by design.** Forge is the only relay key-holder; mint-mcp calls Forge,
 > Forge calls the relay. One key, one settlement path, no duplicated logic.
 
 ## Connect (Claude Desktop, Cursor, Claude Code, any MCP client)
 
-`mint_register` and `mint_verify` are free and need no auth:
+`mint_register`, `mint_attest`, and the feed are free and need no auth (verify + trust
+reads are paid — pass an `fnet_` Bearer key or an x402 `payment_tx`):
 
 ```bash
 claude mcp add --transport http mint-protocol \
@@ -179,16 +203,21 @@ variables before traffic — that's the only secret.
 ```
 server.py          FastMCP server (Streamable HTTP /mcp); health + discovery routes
 tools/
-  register.py      mint_register
-  attest.py        mint_attest
-  verify.py        mint_verify
-  rate.py          mint_rate
-  recommend.py     mint_recommend
-  discover.py      mint_discover
+  register.py      mint_register        (free)
+  attest.py        mint_attest          (free)
+  batch_attest.py  mint_batch_attest    (free)
+  feed.py          mint_feed            (free)
+  rate.py          mint_rate            (free)
+  recommend.py     mint_recommend       (free)
+  discover.py      mint_discover        (free)
+  verify.py        mint_verify          ($0.005 — read_gate)
+  trust_score.py   mint_trust_score     ($0.01  — read_gate)
+  trust_history.py mint_trust_history   ($0.25  — read_gate)
+  trust_compare.py mint_trust_compare   ($0.05  — read_gate)
 forge_client.py    Forge API client (identify + attest) — the only upstream
 supa.py / trust.py trust graph: scores, ratings, recommendations, discovery
-actor_registry.py  best-effort mint_id → actor label cache
-x402_gate.py       x402 pay-per-attest middleware (INERT unless X402_ENABLED)
+read_gate.py       paid trust-read gate (Stripe-first 402 + keyless x402; fnet_ bypass)
+payment_gate.py    legacy pay-per-attest gate (INERT unless X402_ENABLED)
 config.py          env-driven config
 http_util.py       shared never-raises HTTP helper
 ```

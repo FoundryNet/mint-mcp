@@ -15,7 +15,7 @@ import hashlib
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import actor_registry
@@ -23,6 +23,7 @@ import config
 import forge_client
 import merkle_batch
 import ml_scorer
+import okf_reliability
 import payment_gate
 import supa
 import trust
@@ -880,3 +881,164 @@ async def do_discover(capability: Optional[str] = None, actor_type: Optional[str
                   "min_trust_score": min_trust_score, "min_recommendations": min_recommendations,
                   "sort_by": sort_by, "limit": limit},
     }
+
+
+# ── Paid trust reads (read_gate.py gates these — $0.01 / $0.25 / $0.05) ────────
+# The 2026-06-30 pivot: reading the trust graph is the product. These build on the
+# SAME trust engine as mint_verify (trust.recompute / merkle_batch), not a naive
+# column read, so the numbers match the full profile exactly.
+
+async def do_trust_score(mint_id: str) -> dict:
+    """Compact agent reputation lookup: the trust score + headline counts for one
+    MINT identity, freshly recomputed from every signal (attestations, ratings,
+    recommendations, recency). $0.01."""
+    if not (mint_id or "").startswith("MINT-"):
+        return {"error": "bad_request",
+                "detail": f"mint_id must look like 'MINT-xxxxxx', got {mint_id!r}."}
+    if not supa.configured():
+        return {"error": "not_configured", "detail": "Trust store (Supabase) is not configured."}
+    row = await supa.get_trust(mint_id)
+    if row is None:
+        row = await trust.recompute(mint_id)
+    last_hash = None
+    try:
+        atts = await merkle_batch.attestations_for_mint(mint_id, limit=1)
+        if atts:
+            last_hash = atts[0].get("attestation_hash")
+    except Exception:
+        pass
+    return {
+        "agent_id": mint_id,
+        "mint_id": mint_id,
+        "trust_score": row.get("trust_score"),
+        "total_attestations": row.get("total_attestations", 0),
+        "avg_rating": row.get("avg_rating", 0),
+        "total_ratings": row.get("total_ratings", 0),
+        "recommendations": row.get("total_recommendations_received", 0),
+        "work_types": row.get("work_types", {}),
+        "last_active": row.get("last_active"),
+        "computed_at": row.get("computed_at") or _now_iso(),
+        "reliability": okf_reliability.for_attested_analysis(
+            attestation_hash=last_hash, as_of=row.get("last_active"),
+            score=row.get("trust_score")),
+    }
+
+
+async def do_trust_history(mint_id: str, days: int = 30) -> dict:
+    """Full attestation audit trail for an agent over the last `days` — every
+    anchored/queued attestation with its work type, scores, and on-chain anchor
+    status. $0.25."""
+    if not (mint_id or "").startswith("MINT-"):
+        return {"error": "bad_request",
+                "detail": f"mint_id must look like 'MINT-xxxxxx', got {mint_id!r}."}
+    if not supa.configured():
+        return {"error": "not_configured", "detail": "Trust store (Supabase) is not configured."}
+    try:
+        days = max(1, min(365, int(days)))
+    except (TypeError, ValueError):
+        days = 30
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    try:
+        atts = await merkle_batch.attestations_for_mint(mint_id, limit=1000)
+    except Exception as e:
+        return {"error": "not_found", "detail": f"Could not read attestation history: {e}"}
+    entries = [a for a in atts if (a.get("created_at") or "") >= cutoff]
+    last_hash = entries[0].get("attestation_hash") if entries else None
+    return {
+        "agent_id": mint_id,
+        "mint_id": mint_id,
+        "period_days": days,
+        "since": cutoff,
+        "attestations": len(entries),
+        "anchored": sum(1 for a in entries if a.get("status") == "anchored"),
+        "entries": [
+            {"attestation_hash": a.get("attestation_hash"),
+             "work_type": a.get("work_type"),
+             "status": a.get("status"),
+             "anchored": a.get("status") == "anchored",
+             "anchor_tx": a.get("anchor_tx"),
+             "merkle_root": a.get("merkle_root"),
+             "ml_confidence": a.get("ml_confidence"),
+             "trust_delta": a.get("trust_delta"),
+             "base_score": a.get("base_score"),
+             "trust_weighted_score": a.get("trust_weighted_score"),
+             "summary": a.get("summary"),
+             "at": a.get("created_at")}
+            for a in entries
+        ],
+        "reliability": okf_reliability.for_attested_analysis(attestation_hash=last_hash),
+    }
+
+
+async def do_trust_compare(agent_ids: list) -> dict:
+    """Rank multiple agents by trust score — a head-to-head leaderboard built from
+    each agent's full trust profile. $0.05."""
+    if not isinstance(agent_ids, list) or not agent_ids:
+        return {"error": "bad_request",
+                "detail": "agent_ids must be a non-empty list of MINT ids."}
+    if len(agent_ids) > 25:
+        return {"error": "bad_request", "detail": "Compare at most 25 agents per call."}
+    if not supa.configured():
+        return {"error": "not_configured", "detail": "Trust store (Supabase) is not configured."}
+    results = []
+    for aid in agent_ids:
+        s = await do_trust_score(aid)
+        if "error" in s:
+            results.append({"agent_id": aid, "error": s["error"], "detail": s.get("detail")})
+        else:
+            results.append({k: s[k] for k in
+                            ("agent_id", "mint_id", "trust_score", "total_attestations",
+                             "avg_rating", "recommendations", "last_active")})
+    ranked = sorted(results, key=lambda x: (x.get("trust_score") or 0), reverse=True)
+    return {
+        "comparison": ranked,
+        "ranked_count": sum(1 for r in ranked if "error" not in r),
+        "reliability": okf_reliability.for_attested_analysis(attestation_hash=None),
+    }
+
+
+# ── Free discovery: live network feed (read_gate does NOT gate this) ──────────
+
+async def do_feed(limit: int = 50) -> dict:
+    """The newest attestations across the whole network — the public showcase that
+    makes the trust graph legible. FREE (discovery); same data as GET /v1/feed."""
+    if not supa.configured():
+        return {"attestations": [], "count": 0, "stats": {},
+                "note": "Feed store (Supabase) is not configured."}
+    try:
+        limit = max(1, min(200, int(limit)))
+    except (TypeError, ValueError):
+        limit = 50
+    items = await supa.recent_attestations(limit)
+    stats = await supa.feed_stats()
+    return {"attestations": items, "count": len(items), "stats": stats}
+
+
+# ── Free batch attestation (read_gate does NOT gate this) ─────────────────────
+
+async def do_batch_attest(attestations: list, api_key: Optional[str] = None) -> dict:
+    """Attest many completed units of work in one call — same per-item logic as
+    mint_attest (do_attest), looped. FREE. Each item is a dict with the same fields
+    mint_attest takes (mint_id, work_type, duration_seconds, summary, …). Per-item
+    errors are reported inline; one bad item never blocks the rest. Every successful
+    attestation still drains into the next merkle batch for a single on-chain anchor."""
+    if not isinstance(attestations, list) or not attestations:
+        return {"error": "bad_request",
+                "detail": "attestations must be a non-empty list of attestation objects."}
+    if len(attestations) > 100:
+        return {"error": "bad_request", "detail": "Attest at most 100 items per batch call."}
+    results = []
+    ok = 0
+    for i, a in enumerate(attestations):
+        if not isinstance(a, dict):
+            results.append({"index": i, "error": "bad_request", "detail": "item must be an object"})
+            continue
+        r = await do_attest(
+            a.get("mint_id", ""), a.get("work_type", ""), a.get("duration_seconds", 0),
+            summary=a.get("summary", ""), input_hash=a.get("input_hash"),
+            output_hash=a.get("output_hash"), metadata=a.get("metadata"),
+            api_key=api_key)   # attest is free → no payment_tx
+        if "error" not in r and not r.get("payment_required"):
+            ok += 1
+        results.append({"index": i, **r})
+    return {"attested": ok, "total": len(attestations), "results": results}
