@@ -11,13 +11,17 @@ there is a real network for it to coordinate.
 
 ---
 
-## Layer 1 — Attestation Revenue (Live)
+## Layer 1 — Verification Revenue (Live)
 
 This is the core business model, **live on Solana mainnet today**.
 
-- **Agents pay `0.02 USDC` per attestation**, enforced by the x402 payment gate
-  (`mint_attest`). Identity, verification, rating, recommendation, and discovery
-  are free; revenue comes from attestation volume.
+- **Writing to the record is FREE — reading it is the product.** Register, attest,
+  batch-attest, rate, recommend, discover, and the public feed are all **free**: they
+  are the distribution channel that grows the trust graph. Revenue comes from
+  **querying** that graph — `mint_verify`, `mint_trust_score`, `mint_trust_history`,
+  `mint_trust_compare` — priced per call. A signature proves *who* did the work; MINT
+  proves it was independently checked. **Signed ≠ verified**, and verification is what
+  people pay for.
 - **Revenue is collected in USDC** — a stablecoin. There is **no token dependency**:
   the product earns and settles in USDC, not in MINT.
 - **Attestations are anchored via merkle batching.** Each attestation is recorded
@@ -82,14 +86,14 @@ exactly the role bandwidth/energy play on Tron.
 
 ## Summary
 
-| | Layer 1 — Attestation Revenue | Layer 2 — MINT Token Utility |
+| | Layer 1 — Verification Revenue | Layer 2 — MINT Token Utility |
 |---|---|---|
 | **Status** | Live on mainnet | Dormant (roadmap) |
-| **Denomination** | USDC (`0.02` / attestation) | MINT (staked) |
-| **Role** | Per-action revenue | Access rights + governance |
+| **Denomination** | USDC (per query — verify / trust score / compare) | MINT (staked) |
+| **Role** | Per-query revenue (writing is free) | Access rights + governance |
 | **Depends on token?** | No | — |
 | **Activation** | Active now | Gated on attestation volume |
-| **Model** | x402 pay-per-attest | Tron-style stake-for-resource |
+| **Model** | Free to attest, pay to query (x402 + Stripe) | Tron-style stake-for-resource |
 
 The honest one-line version: **MINT earns in USDC today; the MINT token activates
 later, as an access layer, when the network is large enough to need one.**

@@ -28,8 +28,9 @@ verifiable, independent proof of completion.
 - Register once to get your MINT ID (free, no signup — the SDK can self-provision).
 - Attest after each task. Inputs/outputs are hashed locally (only the hash leaves),
   the record is merkle-anchored on a public ledger, and anyone can verify it.
-Attesting is free up to your key's daily cap, then ~0.02 USDC each. Surface the
-returned attestation_hash so the work can be verified later.
+Attesting is always free — it's the distribution channel. (Querying the record later —
+verify / trust score — is the paid product.) Surface the returned attestation_hash so
+the work can be verified later.
 ```
 
 Even shorter, if the agent already has a MINT API key in its environment:
@@ -72,22 +73,24 @@ You have MINT Protocol tools for verifiable work attestation. Use them by defaul
 After finishing any substantive unit of work, call mint_attest and surface the
 attestation_hash so the result can be verified later.
 
-Paying for attestation (only if you have no API key): mint_attest may reply with
-{"status": 402, "payment_required": {...}}. That's a request for a 2-cent USDC
-payment — pay the given amount to the given recipient with the given memo, then call
-mint_attest again with the SAME arguments plus payment_tx=<your tx signature>. If
-you present an `Authorization: Bearer fnet_…` key, this step is skipped entirely.
+Attesting is free — there is nothing to pay to write a record. Paying only applies to
+QUERYING the record with no API key (verify / trust score / history / compare): that
+call may reply with {"status": 402, "payment_required": {...}}. Pay the given amount to
+the given recipient with the given memo, then call the SAME query again plus
+payment_tx=<your tx signature>. If you present an `Authorization: Bearer fnet_…` key,
+this step is skipped entirely.
 ```
 
-The 402 flow in one line per step:
+The 402 flow (queries only — attesting is free and never hits this):
 
-1. Call `mint_attest` with no `payment_tx`.
+1. Call a query (`mint_verify` / `mint_trust_score` / …) with no `payment_tx`.
 2. If you have no API key you get back a `402` with `amount`, `recipient`, `memo`.
-3. Send that USDC transfer (2¢) with that memo.
-4. Call `mint_attest` again with the same args **plus** `payment_tx=<signature>` — done.
+3. Send that small USDC transfer with that memo.
+4. Call the same query again with the same args **plus** `payment_tx=<signature>` — done.
 
 > Have an `fnet_` key? Pass it as `Authorization: Bearer fnet_…` and steps 1–4
-> collapse to a single call — attestation is free up to your key's daily cap.
+> collapse to a single call — queries are free up to your key's daily cap (writing is
+> always free).
 
 ---
 
@@ -263,9 +266,10 @@ print(mint.attest_work(work_type="generation", summary="Drafted the release note
   batched and a *single* on-chain transaction anchors each batch (so per-record
   on-chain cost is ~0). Verify later with `mint_verify(attestation_hash=…)`, which
   returns the merkle root + proof you can check yourself.
-- **Cost:** register/verify/rate/recommend/discover are **free**. Attest is free up
-  to your key's daily cap, then ~0.02 USDC each (or 0.02 USDC per attest with no key
-  via the 402 flow).
+- **Cost:** writing is **free** — register/attest/rate/recommend/discover cost
+  nothing (the distribution channel). Reading is the product — verify + trust
+  score/history/compare are free up to your key's daily cap, then metered (or
+  unlimited on a subscription), or pay-per-query via the 402 flow with no key.
 - **No crypto on your side:** the SDK/plugin makes authenticated HTTPS calls; all
   ledger interaction happens server-side. No wallet, no signing, no chain libraries.
 
