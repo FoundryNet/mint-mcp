@@ -317,8 +317,22 @@ def _iso(ts: float) -> str:
 
 # ── the gate (called by core.do_attest, behind BOTH MCP and REST) ─────────────
 
+import os as _os
+
+# Same fail-closed fnet_ hash allowlist as read_gate. The attest gate is presently
+# free (X402_ENABLED default false), but if pay-per-attest is ever enabled this stops
+# `Authorization: Bearer <anything>` from bypassing payment.
+_FNET_KEY_HASHES = {h.strip() for h in _os.environ.get(
+    "FNET_VALID_KEY_HASHES", "").split(",") if h.strip()}
+
+
 def _has_api_key(api_key: Optional[str]) -> bool:
-    return bool(api_key and api_key.strip())
+    if not api_key or not api_key.strip():
+        return False
+    k = api_key.strip()
+    if not k.startswith("fnet_"):
+        return False
+    return hashlib.sha256(k.encode("utf-8")).hexdigest() in _FNET_KEY_HASHES
 
 
 async def precheck(mint_id: str, intent: str, payment_tx: Optional[str],

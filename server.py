@@ -4,14 +4,14 @@ A lean, standalone MCP server (FastAPI + SSE) exposing exactly three tools to an
 autonomous agent, machine, or service:
 
   mint_register  — give an actor a persistent cryptographic identity   (FREE)
-  mint_attest    — anchor a tamper-evident record of completed work     (2¢)
-  mint_verify    — query an actor's trust score + verified work history (FREE)
+  mint_attest    — anchor a tamper-evident record of completed work     (FREE)
+  mint_verify    — query an actor's trust score + verified work history (PAID)
 
 It rebuilds nothing and holds no relay key: identity reuses Forge /v1/identify,
 attestation reuses Forge /v1/attest (Forge is the single relay key-holder +
 settlement engine). Agents are the users — no web UI, no dashboard. Free to
-register, free to verify, 2¢ to attest; the network grows on free identity +
-free reputation, revenue comes from attestation volume.
+register and attest; the network grows on free identity + free attestation, and
+revenue comes from the paid trust READ (verify / trust score). Signed ≠ verified.
 
 Transport: Streamable HTTP at /mcp (remote Railway hosting + Smithery's hosted
 gateway, which connects via Streamable HTTP — SSE 405s there). Health: GET /health.
@@ -127,7 +127,7 @@ async def health(request: Request) -> JSONResponse:
         "trust_layer":       "live" if supa.configured() else "identity_only",
         "x402_enabled":      config.X402_ENABLED,
         "attest_payment":    "armed" if payment_gate.is_active() else "free",
-        "attest_price_usdc": config.ATTEST_PRICE_USDC,
+        "attest_price_usdc": (config.ATTEST_PRICE_USDC if payment_gate.is_active() else 0.0),
         "payment_recipient": config.PAYMENT_RECIPIENT,
         "payment_ledger":    "supabase" if supa.configured() else "in_memory",
         "merkle_anchoring":  ("on" if config.MERKLE_ANCHOR_ENABLED else "off"),
@@ -560,16 +560,17 @@ async def server_card(request: Request) -> JSONResponse:
                 "AI agents, physical machines, IoT devices, services. Persistent "
                 "cryptographic identity, tamper-evident on-chain (Solana) work "
                 "records, and trust scores built from verified history. Free to "
-                "register, free to verify, 2¢ to attest."
+                "register and attest; verifying and reading trust scores is the "
+                "paid product. Signed ≠ verified."
             ),
             "serverUrl": config.PUBLIC_MCP_URL,
             "transport": "streamable-http",
             "tools_count": len(tools),
             "categories": ["agents", "identity", "reputation", "attestation", "blockchain"],
             "pricing": {
-                "model": "metered",
-                "free_tier": "Unlimited register + verify, no card",
-                "paid_from": "0.02 USDC per attestation (x402)",
+                "model": "attest_free_verify_paid",
+                "free_tier": "Unlimited register + attest, no card",
+                "paid_from": "0.005 USDC per verify (x402) or $19/mo Stripe",
             },
             # API reference (human HTML) + machine-readable spec — so any agent
             # fetching the server card auto-discovers how to call the REST API.

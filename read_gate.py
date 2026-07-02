@@ -100,8 +100,24 @@ def payment_required_body(tool: str, intent: str,
     return body
 
 
+import os as _os
+
+# Bearer keys are only honored if they are real fnet_ keys whose sha256 is in the
+# allowlist env (same scheme as the Node gateways / Python fleet). FAIL-CLOSED: an
+# empty allowlist means NO bearer bypasses — the caller must pay via x402 payment_tx.
+# Previously this accepted ANY non-empty bearer, so `Authorization: Bearer x` bought
+# the paid /v1/verify, /v1/trust-* reads for free.
+_FNET_KEY_HASHES = {h.strip() for h in _os.environ.get(
+    "FNET_VALID_KEY_HASHES", "").split(",") if h.strip()}
+
+
 def _has_api_key(api_key: Optional[str]) -> bool:
-    return bool(api_key and api_key.strip())
+    if not api_key or not api_key.strip():
+        return False
+    k = api_key.strip()
+    if not k.startswith("fnet_"):
+        return False
+    return hashlib.sha256(k.encode("utf-8")).hexdigest() in _FNET_KEY_HASHES
 
 
 async def precheck(tool: str, args: dict, payment_tx: Optional[str],

@@ -5,7 +5,9 @@ and the mint-attest SDK use). Maps work_type → settlement complexity and posts
 Forge /v1/attest, which settles against the actor's REAL mint_id (trust + earnings
 + on-chain history) and returns the receipt. mint-mcp never touches the relay.
 
-PRICING: 2¢ per attestation. The x402 gate (server.py) is INERT unless X402_ENABLED.
+PRICING: FREE. Attesting is the distribution channel and costs nothing; the paid
+product is querying the record (mint_verify / mint_trust_score / …). The legacy
+pay-per-attest x402 gate (server.py) is INERT unless X402_ENABLED.
 """
 from __future__ import annotations
 
@@ -29,11 +31,11 @@ def register(mcp) -> None:
         """Attest a completed unit of work for a registered actor, anchoring a
         tamper-evident record on Solana mainnet and updating the actor's trust.
 
-        PRICING: 2¢ USDC per attestation. Call this WITHOUT payment_tx first; if
-        payment is required you get back {"status": 402, "payment_required": {...}}
-        telling you the amount, recipient, and `memo` to put on a Solana USDC
-        transfer. Make that payment, then call again with the SAME arguments plus
-        payment_tx=<the transaction signature>.
+        PRICING: FREE. Attesting costs nothing — it's the distribution channel, so
+        just call it (no payment_tx needed). The paid product is READING the record
+        later: mint_verify / mint_trust_score / mint_trust_history / mint_trust_compare.
+        (`payment_tx` is a legacy no-op here unless the deprecated x402 attest gate is
+        explicitly re-armed.)
 
         On success you get attestation_id, data_hash, and attestation_hash, with
         anchored=false + an anchor_eta: the attestation is recorded and paid
