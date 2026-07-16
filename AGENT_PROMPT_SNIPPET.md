@@ -273,4 +273,4 @@ print(mint.attest_work(work_type="generation", summary="Drafted the release note
 - **No crypto on your side:** the SDK/plugin makes authenticated HTTPS calls; all
   ledger interaction happens server-side. No wallet, no signing, no chain libraries.
 
-Questions: `hello@foundrynet.io` · Explorer: https://mint-explorer.vercel.app
+Questions: `forge@foundrynet.io` · Explorer: https://mint-explorer.vercel.app

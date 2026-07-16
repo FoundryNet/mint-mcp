@@ -4,7 +4,7 @@
   "name_for_model": "mint_protocol",
   "description": "Universal work attestation + trust graph for autonomous agents. Attest free, verify paid: writing to the trust graph (register, attest, batch attest, feed, rate, recommend, discover) is free — the distribution channel; reading it (verify, trust score/history/compare) is the paid product.",
   "tagline": "Attest free. Verify paid. The trust graph grows with every free attestation — reading it is where the value lives.",
-  "contact": "hello@foundrynet.io",
+  "contact": "forge@foundrynet.io",
   "legal_info_url": "https://foundrynet.io",
   "endpoints": [
     {
@@ -34,8 +34,8 @@
   "payment": {
     "x402": { "supported": true, "currency": "USDC", "network": "solana" },
     "subscriptions": {
-      "pro": { "price": "$19/month", "checkout": "https://buy.stripe.com/5kQeVdcUg4H52yG4Xt2400f" },
-      "intelligence": { "price": "$49/month", "checkout": "https://buy.stripe.com/28EeVd8E0a1p6OWblR2400g" }
+      "pro": { "price": "$19/month", "checkout": "https://buy.stripe.com/3cIdR278Cglq7bY5b67N604" },
+      "intelligence": { "price": "$49/month", "checkout": "https://buy.stripe.com/4gMaEQ78C8SYaoa32Y7N605" }
     }
   }
 }

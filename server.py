@@ -335,6 +335,32 @@ async def feed(request: Request) -> JSONResponse:
                         headers=cors)
 
 
+@mcp.custom_route("/v1/stats", methods=["GET", "OPTIONS"])
+async def stats(request: Request) -> JSONResponse:
+    """Public lifetime showcase stats for the explorer header panels: registered
+    actors, total attestations, distinct work types, plus the protocol / settlement /
+    on-chain program constants. FREE, CORS-open, short-cached."""
+    cors = {"Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Cache-Control": "public, max-age=60, s-maxage=60"}
+    if request.method == "OPTIONS":
+        return JSONResponse({}, status_code=204, headers=cors)
+    actors = await supa._count("mint_actors", {"select": "mint_id"})
+    attestations = await supa._count("mint_attestations", {})
+    rows = await supa._select("mint_attestations", {"select": "work_type", "limit": "2000"})
+    work_types = sorted({(r.get("work_type") or "").strip() for r in rows if r.get("work_type")})
+    return JSONResponse({
+        "registered_actors": actors,
+        "total_attestations": attestations,
+        "work_types": work_types,
+        "work_types_count": len(work_types),
+        "protocol": "MINT v1",
+        "settlement": "Solana",
+        "program_id": "4ZvTZ3skfeMF3ZGyABoazPa9tiudw2QSwuVKn45t2AKL",
+        "program_url": "https://solscan.io/account/4ZvTZ3skfeMF3ZGyABoazPa9tiudw2QSwuVKn45t2AKL",
+    }, headers=cors)
+
+
 @mcp.custom_route("/v1/rate", methods=["POST"])
 async def rest_rate(request: Request) -> JSONResponse:
     # FREE; the Bearer fnet_ key identifies the rater (bound to an owned actor).
@@ -457,7 +483,7 @@ _AGENT_CARD = {
             "intelligence": {"price": "$49/month", "checkout": config.STRIPE_LINK_INTEL},
         },
     },
-    "contact": "hello@foundrynet.io",
+    "contact": "forge@foundrynet.io",
 }
 
 
@@ -499,7 +525,7 @@ def _mcp_directory() -> dict:
                 "intelligence": {"price": "$49/month", "checkout": config.STRIPE_LINK_INTEL},
             },
         },
-        "contact": "hello@foundrynet.io",
+        "contact": "forge@foundrynet.io",
     }
 
 

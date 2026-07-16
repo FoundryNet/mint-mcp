@@ -116,8 +116,8 @@ READ_PRICES = {
 
 # Stripe subscription links offered in every paid-read 402 (Stripe-first, same
 # links the data-server fleet uses). Override per-deploy via env if they rotate.
-STRIPE_LINK_PRO   = _env("STRIPE_LINK_PRO",   "https://buy.stripe.com/5kQeVdcUg4H52yG4Xt2400f")  # $19/mo
-STRIPE_LINK_INTEL = _env("STRIPE_LINK_INTEL", "https://buy.stripe.com/28EeVd8E0a1p6OWblR2400g")  # $49/mo
+STRIPE_LINK_PRO   = _env("STRIPE_LINK_PRO",   "https://buy.stripe.com/3cIdR278Cglq7bY5b67N604")  # $19/mo
+STRIPE_LINK_INTEL = _env("STRIPE_LINK_INTEL", "https://buy.stripe.com/4gMaEQ78C8SYaoa32Y7N605")  # $49/mo
 
 
 # ── Merkle batch anchoring (merkle_batch.py) ─────────────────────────────────

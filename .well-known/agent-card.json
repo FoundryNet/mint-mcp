@@ -23,7 +23,12 @@
     { "name": "mint_verify", "description": "Verify an attestation / actor's trust profile against the chain", "pricing": "$0.005" },
     { "name": "mint_trust_score", "description": "Agent reputation lookup from the trust graph", "pricing": "$0.01" },
     { "name": "mint_trust_history", "description": "Full attestation audit trail for an agent", "pricing": "$0.25" },
-    { "name": "mint_trust_compare", "description": "Rank multiple agents by trust score", "pricing": "$0.05" }
+    { "name": "mint_trust_compare", "description": "Rank multiple agents by trust score", "pricing": "$0.05" },
+    { "name": "mint_create_cell", "description": "Open a stake-backed on-chain work cell (FoundryNet devnet)", "pricing": "network fee" },
+    { "name": "mint_join_cell", "description": "Join a work cell by staking; opens participant + trust accounts", "pricing": "network fee" },
+    { "name": "mint_settle_cell", "description": "Evaluate + settle a work cell; 96/2/2 split, stakes returned, trust updated", "pricing": "network fee" },
+    { "name": "mint_create_policy", "description": "Open a parametric insurance policy with funded coverage escrow", "pricing": "network fee" },
+    { "name": "mint_settle_policy", "description": "Settle a policy: pay beneficiary if triggered, else refund insurer", "pricing": "network fee" }
   ],
   "protocols": {
     "mcp": {
@@ -43,9 +48,9 @@
       }
     },
     "subscriptions": {
-      "pro": { "price": "$19/month", "checkout": "https://buy.stripe.com/5kQeVdcUg4H52yG4Xt2400f" },
-      "intelligence": { "price": "$49/month", "checkout": "https://buy.stripe.com/28EeVd8E0a1p6OWblR2400g" }
+      "pro": { "price": "$19/month", "checkout": "https://buy.stripe.com/3cIdR278Cglq7bY5b67N604" },
+      "intelligence": { "price": "$49/month", "checkout": "https://buy.stripe.com/4gMaEQ78C8SYaoa32Y7N605" }
     }
   },
-  "contact": "hello@foundrynet.io"
+  "contact": "forge@foundrynet.io"
 }

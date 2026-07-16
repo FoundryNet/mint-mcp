@@ -394,8 +394,8 @@ def build_openapi() -> dict:
             "description": ("Universal work attestation, trust, and discovery for "
                             "autonomous agents. Identity + attestation settle on Solana; "
                             "rating, recommendation, and discovery are free."),
-            "contact": {"name": "FoundryNet", "url": "https://foundrynet.io",
-                        "email": "hello@foundrynet.io"},
+            "contact": {"name": "Foundry Labs", "url": "https://foundrynet.io",
+                        "email": "forge@foundrynet.io"},
             "license": {"name": "Proprietary"},
         },
         "servers": [{"url": BASE_URL}],
@@ -679,7 +679,7 @@ footer .meta {{ color:var(--fg-dim); font-family:'JetBrains Mono',monospace; fon
     </div>
     <div class="meta">
       Solana Program: {_esc(PROGRAM_ID)}<br>
-      MINT Protocol v{_esc(VERSION)} · FoundryNet Labs · Solana Mainnet
+      MINT Protocol v{_esc(VERSION)} · Foundry Labs · Solana Mainnet
     </div>
   </div>
 </footer>

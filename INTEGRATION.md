@@ -170,5 +170,5 @@ ecosystem, not locked in one platform.
 
 ---
 
-Questions or a key request: **hello@foundrynet.io** ·
+Questions or a key request: **forge@foundrynet.io** ·
 [foundrynet.io](https://foundrynet.io) · [Explorer](https://mint-explorer.vercel.app)
