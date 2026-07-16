@@ -19,7 +19,7 @@ verification** infrastructure beneath the entire agent economy.
 - **MCP endpoint:** `https://mint-mcp-production.up.railway.app/mcp` (Streamable HTTP)
 - **Health:** `https://mint-mcp-production.up.railway.app/health`
 
-> Distinct from [FoundryNet Forge](https://foundrynet.io) (industrial machines). Forge is
+> Distinct from [FoundryNet Forge](https://foundrynet.io?utm_source=github&utm_medium=readme&utm_campaign=mint-mcp) (industrial machines). Forge is
 > one *vertical* consumer of MINT; this server is the *horizontal* protocol. **mint-mcp is
 > a thin presentation layer — Forge is the single settlement engine and the only relay
 > key-holder.** Agents are the users; there is no web UI.
@@ -97,6 +97,18 @@ code blocks for CrewAI, LangChain, AutoGen, LlamaIndex, and Semantic Kernel.
 
 Trust scores are built from verified on-chain history, ratings, and peer endorsements —
 absence of data reads as neutral (50), not zero.
+
+**Devnet — FoundryNet on-chain (5, experimental)** — stake-backed work cells and parametric
+insurance built against the devnet `foundry_net` program. Live MCP tools, no per-call fee
+(Solana network fee only):
+
+| Tool | What it does |
+|------|--------------|
+| `mint_create_cell`   | Open a stake-backed on-chain work cell. |
+| `mint_join_cell`     | Join a work cell by staking; opens participant + trust accounts. |
+| `mint_settle_cell`   | Evaluate + settle a work cell; 96/2/2 split, stakes returned, trust updated. |
+| `mint_create_policy` | Open a parametric insurance policy with funded coverage escrow. |
+| `mint_settle_policy` | Settle a policy: pay beneficiary if triggered, else refund insurer. |
 
 ## Economic model — attest free, verify paid (the 2026-06-30 pivot)
 
@@ -224,9 +236,9 @@ http_util.py       shared never-raises HTTP helper
 
 ## Resources
 
-- [Machine Identity for the Agent Economy](https://foundrynet.io/machine-identity)
-- [Work Attestation for Industrial Equipment](https://foundrynet.io/work-attestation)
-- [MCP for Industrial Equipment](https://foundrynet.io/mcp-industrial)
+- [Machine Identity for the Agent Economy](https://foundrynet.io/machine-identity?utm_source=github&utm_medium=readme&utm_campaign=mint-mcp)
+- [Work Attestation for Industrial Equipment](https://foundrynet.io/work-attestation?utm_source=github&utm_medium=readme&utm_campaign=mint-mcp)
+- [MCP for Industrial Equipment](https://foundrynet.io/mcp-industrial?utm_source=github&utm_medium=readme&utm_campaign=mint-mcp)
 - [Tokenomics — the two-layer economic model](TOKENOMICS.md)
 - [API Documentation](https://mint-mcp-production.up.railway.app/docs)
 - [Explorer](https://mint-explorer.vercel.app)
@@ -234,9 +246,9 @@ http_util.py       shared never-raises HTTP helper
 
 ## License
 
-Proprietary (commercial). © FoundryNet. Contact: hello@foundrynet.io
+Proprietary (commercial). © Foundry Labs LLC. Contact: forge@foundrynet.io
 
 ## Live network activity
 
 **Live feed:** [mint.foundrynet.io/feed](https://mint.foundrynet.io/feed)  
-Real-time verified work across 21 servers and autonomous agents, anchored on Solana via [MINT Protocol](https://mint.foundrynet.io).
+Real-time verified work across 13 servers and autonomous agents, anchored on Solana via [MINT Protocol](https://mint.foundrynet.io).
