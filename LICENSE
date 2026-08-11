@@ -1,14 +1,14 @@
 FoundryNet Proprietary License
 
-Copyright (c) 2026 FoundryNet Labs. All rights reserved.
+Copyright (c) 2026 Foundry Labs LLC. All rights reserved.
 
 This software and its associated documentation (the "Software") are the
-proprietary property of FoundryNet Labs. The Software is licensed, not sold.
+proprietary property of Foundry Labs LLC. The Software is licensed, not sold.
 
 Use of the hosted FoundryNet MCP servers and services is governed by the
 terms published at https://foundrynet.io/terms.
 
-Without the prior written permission of FoundryNet Labs, you may NOT copy,
+Without the prior written permission of Foundry Labs LLC, you may NOT copy,
 modify, merge, publish, distribute, sublicense, sell, or create derivative
 works from the source contained in this repository.
 
@@ -20,4 +20,4 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING
 FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 IN THE SOFTWARE.
 
-Contact: hello@foundrynet.io
+Contact: forge@foundrynet.io
