@@ -9,3 +9,76 @@ __pycache__/
 # secrets — never publish
 .env
 *.key
+
+# ── FoundryNet shared .gitignore ────────────────────────────────────────────
+# Managed centrally. If you need an exception, add it BELOW this block with a
+# comment saying why, rather than editing the block.
+#
+# These entries exist because each one has actually leaked. A 2026-09-27 scan of
+# all 55 FoundryNet repositories found Supabase service-role keys, Postgres
+# passwords and a machine keypair committed across 11 public repositories. Every
+# pattern below is one of the files that carried them.
+
+# Supabase CLI artifacts. `.service-key` holds a SERVICE-ROLE JWT, which bypasses
+# row-level security completely, and `supabase/.temp/pooler-url` holds a Postgres
+# connection string WITH the password inline. Both are written by the CLI; neither
+# is source.
+.service-key
+supabase/.temp/
+supabase/.branches/
+
+# Forge / MINT machine identity. `machine_keypair.json` is a private key.
+.foundry/
+.foundry_credentials.json
+*keypair*.json
+*.keypair
+
+# Environment files. Four of these were committed to a public repo with live Neon
+# Postgres credentials in them.
+.env
+.env.*
+!.env.example
+!.env.template
+!.env.sample
+
+# Credentials and keys generally
+*.pem
+*.key
+!**/public*.key
+*.p12
+*.pfx
+id_rsa*
+credentials.json
+service-account*.json
+*_rsa
+*_ed25519
+
+# Python bytecode. 62 .pyc files were tracked in forge-prod's predecessor; the
+# build then copied stale cpython-311 bytecode into a python:3.12 image, and
+# because .pyc decompiles trivially, committing it to a public repo published the
+# proprietary engine as surely as the source would.
+**/__pycache__/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Node / build output. A committed 119 MB node_modules binary made one repo
+# impossible to push to GitHub at all (over the 100 MB hard limit).
+node_modules/
+.next/
+dist/
+build/
+.turbo/
+
+# Timestamped backups these trees accumulate (api.py.bak.secfix.20260718_003322)
+*.bak.*
+*.backup
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+# ── end FoundryNet shared block ─────────────────────────────────────────────
